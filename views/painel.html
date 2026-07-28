@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel · Pedidos Maxprint</title>
+<style>
+:root{ --laranja:#EB8704; --laranja-claro:#FFF3E3; --preto:#0B0B0C; --cinza:#8D8E8E;
+       --borda:#E5E5E7; --claro:#F4F4F5; --verde:#0E9F6E; --vermelho:#D92D20; --azul:#1D4ED8; }
+*{ box-sizing:border-box; }
+body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+      background:var(--claro); color:var(--preto); font-size:14px; }
+img{ display:block; }
+header{ background:var(--preto); height:56px; display:flex; align-items:center; gap:14px;
+        padding:0 18px; position:sticky; top:0; z-index:40; }
+header img{ height:19px; }
+header img.mx{ filter:invert(1); }
+header .barra{ width:1px; height:19px; background:#3A3A3D; }
+header .titulo{ color:#fff; font-size:14px; font-weight:600; margin-left:6px; }
+header .espaco{ flex:1; }
+header button{ background:#1B1B1E; color:#fff; border:1px solid #2C2C2F; border-radius:8px;
+               padding:7px 12px; font-size:13px; cursor:pointer; }
+.abas{ background:#fff; border-bottom:1px solid var(--borda); display:flex; gap:2px;
+       padding:0 18px; position:sticky; top:56px; z-index:39; overflow-x:auto; }
+.abas button{ background:none; border:0; padding:13px 15px; font-size:13.5px; cursor:pointer;
+              border-bottom:2.5px solid transparent; color:#555; white-space:nowrap; }
+.abas button.ativa{ color:var(--preto); border-bottom-color:var(--laranja); font-weight:700; }
+main{ padding:20px 18px 80px; max-width:1400px; margin:0 auto; }
+h1{ font-size:19px; margin:0 0 4px; }
+p.sub{ color:var(--cinza); font-size:13px; margin:0 0 18px; }
+.cartoes{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px;
+          margin-bottom:22px; }
+.cartao{ background:#fff; border:1px solid var(--borda); border-radius:12px; padding:14px 16px; }
+.cartao .r{ font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--cinza); }
+.cartao .v{ font-size:25px; font-weight:800; letter-spacing:-.6px; margin-top:3px; }
+.cartao.destaque{ background:var(--preto); color:#fff; border-color:var(--preto); }
+.cartao.destaque .v{ color:var(--laranja); }
+.painel{ background:#fff; border:1px solid var(--borda); border-radius:12px; padding:18px;
+         margin-bottom:18px; }
+.painel h2{ font-size:15px; margin:0 0 3px; }
+.painel p.d{ font-size:12.5px; color:var(--cinza); margin:0 0 14px; }
+table{ width:100%; border-collapse:collapse; font-size:13px; }
+th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.5px;
+    color:var(--cinza); padding:8px 10px; border-bottom:1px solid var(--borda); }
+td{ padding:9px 10px; border-bottom:1px solid var(--claro); vertical-align:middle; }
+tr:hover td{ background:#FCFCFD; }
+.etiq{ font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:20px; }
+.etiq.novo{ background:var(--laranja); color:#fff; }
+.etiq.digitado{ background:#DBEAFE; color:var(--azul); }
+.etiq.faturado{ background:#DCFCE7; color:var(--verde); }
+.etiq.cancelado{ background:var(--claro); color:var(--cinza); }
+button.acao{ border:1px solid var(--borda); background:#fff; border-radius:7px; padding:5px 10px;
+             font-size:12px; cursor:pointer; }
+button.acao:hover{ border-color:var(--laranja); color:var(--laranja); }
+button.primaria{ background:var(--laranja); color:#fff; border:0; border-radius:9px;
+                 padding:10px 16px; font-size:14px; font-weight:700; cursor:pointer; }
+button.primaria:disabled{ background:#E5E5E7; color:#A0A0A3; cursor:default; }
+a.acao{ text-decoration:none; color:inherit; }
+.solto{ display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; }
+.campo{ display:flex; flex-direction:column; }
+.campo label{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.5px;
+              color:var(--cinza); margin-bottom:4px; }
+.campo input, .campo select, .campo textarea{ padding:9px 11px; border:1.5px solid var(--borda);
+       border-radius:8px; font-size:14px; font-family:inherit; }
+.campo input:focus, .campo select:focus{ outline:none; border-color:var(--laranja); }
+.import{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; }
+.caixa-import{ border:2px dashed var(--borda); border-radius:12px; padding:18px; text-align:center; }
+.caixa-import h3{ margin:0 0 4px; font-size:14px; }
+.caixa-import p{ font-size:12px; color:var(--cinza); margin:0 0 12px; min-height:48px; }
+.caixa-import input[type=file]{ display:none; }
+.caixa-import label{ display:inline-block; background:var(--preto); color:#fff; border-radius:8px;
+                     padding:9px 16px; font-size:13px; cursor:pointer; }
+.caixa-import .arqs{ font-size:11.5px; color:var(--cinza); margin-top:9px; min-height:16px; }
+.aviso{ background:#FFF8E6; border:1px solid #F5D98A; border-radius:9px; padding:10px 13px;
+        font-size:12.5px; margin-top:12px; }
+.aviso.ok{ background:#ECFDF3; border-color:#A6E9C5; }
+.aviso.erro{ background:#FDECEC; border-color:#F3B5B0; color:#B42318; }
+.grade-rel{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.senha{ font-family:ui-monospace,Menlo,monospace; background:var(--claro); padding:3px 8px;
+        border-radius:6px; font-size:13px; }
+.tapa{ position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:80; display:none;
+       align-items:flex-start; justify-content:center; padding:26px 14px; overflow-y:auto; }
+.tapa.aberto{ display:flex; }
+.janela{ background:#fff; border-radius:14px; width:100%; max-width:700px; padding:22px 24px; }
+.campos{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.campos .cheio{ grid-column:1/-1; }
+.oculto{ display:none !important; }
+@media (max-width:900px){ .grade-rel{ grid-template-columns:1fr; } .campos{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/logos/ativacao.png" alt="Ativação">
+  <div class="barra"></div>
+  <img class="mx" src="/logos/maxprint.png" alt="Maxprint">
+  <span class="titulo">Painel de pedidos</span>
+  <div class="espaco"></div>
+  <span style="color:#8D8E8E;font-size:12.5px" id="quem"></span>
+  <button id="sair">Sair</button>
+</header>
+
+<div class="abas">
+  <button data-aba="pedidos" class="ativa">Pedidos</button>
+  <button data-aba="importar">Importar bases</button>
+  <button data-aba="clientes">Clientes</button>
+  <button data-aba="produtos">Produtos e fotos</button>
+  <button data-aba="relatorios">Relatórios</button>
+  <button data-aba="config">Configuração</button>
+</div>
+
+<main>
+  <section id="aba-pedidos"></section>
+  <section id="aba-importar" class="oculto"></section>
+  <section id="aba-clientes" class="oculto"></section>
+  <section id="aba-produtos" class="oculto"></section>
+  <section id="aba-relatorios" class="oculto"></section>
+  <section id="aba-config" class="oculto"></section>
+</main>
+
+<div class="tapa" id="tapa"><div class="janela" id="janela"></div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const dinheiro = (v) => Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const data = (d) => new Date(d).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+const esc = (s) => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = async (url, opcoes) => {
+  const r = await fetch(url, opcoes);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.erro || 'Deu erro.');
+  return d;
+};
+
+let EU = null;
+
+/* ============================== abas ============================== */
+document.querySelectorAll('.abas button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.abas button').forEach(x => x.classList.remove('ativa'));
+    b.classList.add('ativa');
+    document.querySelectorAll('main section').forEach(s => s.classList.add('oculto'));
+    $('aba-' + b.dataset.aba).classList.remove('oculto');
+    ({ pedidos: abaPedidos, importar: abaImportar, clientes: abaClientes,
+       produtos: abaProdutos, relatorios: abaRelatorios, config: abaConfig })[b.dataset.aba]();
+  });
+});
+
+$('sair').onclick = async () => { await fetch('/api/auth/sair',{method:'POST'}); location.href='/login'; };
+$('tapa').onclick = (e) => { if (e.target === $('tapa')) $('tapa').classList.remove('aberto'); };
+const fecharJanela = () => $('tapa').classList.remove('aberto');
+
+/* ============================= pedidos ============================= */
+async function abaPedidos() {
+  const [resumo, pedidos] = await Promise.all([
+    api('/api/admin/resumo'),
+    api('/api/pedidos?limite=200'),
+  ]);
+
+  const novos = pedidos.filter(p => p.status === 'novo');
+  const resto = pedidos.filter(p => p.status !== 'novo');
+
+  $('aba-pedidos').innerHTML = `
+    <h1>Pedidos</h1>
+    <p class="sub">O que chegou de cliente, em ordem de chegada.</p>
+
+    <div class="cartoes">
+      <div class="cartao destaque"><div class="r">Pedidos novos</div><div class="v">${resumo.pedidos.novos}</div></div>
+      <div class="cartao"><div class="r">Digitados</div><div class="v">${resumo.pedidos.digitados}</div></div>
+      <div class="cartao"><div class="r">Faturados</div><div class="v">${resumo.pedidos.faturados}</div></div>
+      <div class="cartao"><div class="r">Últimos 30 dias</div><div class="v" style="font-size:20px">${dinheiro(resumo.ultimos30.total)}</div></div>
+      <div class="cartao"><div class="r">Produtos no ar</div><div class="v">${resumo.produtos}</div></div>
+      <div class="cartao"><div class="r">Clientes ativos</div><div class="v">${resumo.clientes}</div></div>
+    </div>
+
+    ${resumo.semFoto > 0 ? `<div class="aviso">${resumo.semFoto} produtos estão no catálogo sem foto.
+      Veja a aba <b>Produtos e fotos</b> para anexar as imagens dos que importam.</div>` : ''}
+
+    <div class="painel">
+      <h2>Chegaram agora</h2>
+      <p class="d">Pedido novo é o que ainda não foi lançado no portal da Maxprint.</p>
+      ${tabelaPedidos(novos, 'Nenhum pedido novo no momento.')}
+    </div>
+
+    <div class="painel">
+      <h2>Histórico</h2>
+      <p class="d">Tudo que já foi digitado, faturado ou cancelado.</p>
+      ${tabelaPedidos(resto, 'Nada aqui ainda.')}
+    </div>`;
+
+  ligarPedidos();
+}
+
+function tabelaPedidos(lista, vazio) {
+  if (!lista.length) return `<p style="color:var(--cinza);font-size:13px">${vazio}</p>`;
+  return `<table><thead><tr>
+      <th>Nº</th><th>Cliente</th><th>Quando</th><th>Condição</th>
+      <th>Itens</th><th>Total</th><th>Status</th><th></th>
+    </tr></thead><tbody>
+    ${lista.map(p => `<tr>
+      <td><b>${p.numero}</b></td>
+      <td>${esc(p.razaoSocial)}<div style="font-size:11px;color:var(--cinza)">${esc(p.cnpj)}</div></td>
+      <td>${data(p.createdAt)}</td>
+      <td>${esc(p.condicaoRotulo)}${p.acrescimoPrazo ? `<div style="font-size:11px;color:var(--cinza)">+${(p.acrescimoPrazo*100).toFixed(2)}%</div>` : ''}</td>
+      <td>${p.itens.length}<div style="font-size:11px;color:var(--cinza)">${p.pecas} peças</div></td>
+      <td><b>${dinheiro(p.total)}</b>${p.totalProgramado>0?`<div style="font-size:11px;color:var(--azul)">${dinheiro(p.totalProgramado)} programado</div>`:''}</td>
+      <td><span class="etiq ${p.status}">${p.status}</span></td>
+      <td style="white-space:nowrap">
+        <button class="acao" data-ver="${p.numero}">Ver</button>
+        <a class="acao" href="/api/pedidos/${p.numero}/excel">Excel</a>
+        <a class="acao" href="/api/pedidos/${p.numero}/pdf" target="_blank">PDF</a>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function ligarPedidos() {
+  document.querySelectorAll('[data-ver]').forEach(b => {
+    b.addEventListener('click', () => verPedido(b.dataset.ver));
+  });
+}
+
+async function verPedido(numero) {
+  const p = await api('/api/pedidos/' + numero);
+  $('janela').innerHTML = `
+    <h1>Pedido ${p.numero}</h1>
+    <p class="sub">${esc(p.razaoSocial)} · ${esc(p.cnpj)} · ${data(p.createdAt)}</p>
+
+    <div class="cartoes">
+      <div class="cartao"><div class="r">Total</div><div class="v" style="font-size:20px">${dinheiro(p.total)}</div></div>
+      <div class="cartao"><div class="r">Condição</div><div class="v" style="font-size:17px">${esc(p.condicaoRotulo)}</div></div>
+      <div class="cartao"><div class="r">Frete</div><div class="v" style="font-size:17px">${esc(p.frete)}</div></div>
+    </div>
+
+    <table><thead><tr><th></th><th>Código</th><th>Produto</th><th>Qtd</th><th>Unit.</th><th>Total</th><th>Entrega</th></tr></thead>
+    <tbody>${p.itens.map(i => `<tr>
+      <td>${i.imagem?`<img src="/img/${i.imagem}" style="width:34px;height:34px;object-fit:contain">`:''}</td>
+      <td style="font-size:12px">${esc(i.codigoOriginal||i.codigo)}</td>
+      <td style="font-size:12.5px">${esc(i.nome)}</td>
+      <td><b>${i.quantidade}</b></td>
+      <td>${dinheiro(i.precoUnitario)}</td>
+      <td><b>${dinheiro(i.total)}</b></td>
+      <td style="font-size:11.5px;color:${i.natureza==='programado'?'var(--azul)':'var(--cinza)'}">
+        ${i.natureza==='programado'?('Programado '+esc(i.mesChegada)):'Pronta entrega'}</td>
+    </tr>`).join('')}</tbody></table>
+
+    <div class="solto" style="margin-top:18px">
+      <div class="campo"><label>Endereço</label><input value="${esc(p.endereco)}" readonly style="min-width:280px"></div>
+      <div class="campo"><label>Transportadora</label><input value="${esc(p.transportadora)}" readonly></div>
+      <div class="campo"><label>Vendedor</label><input value="${esc(p.vendedor)}" readonly></div>
+    </div>
+    ${p.observacoes?`<p style="font-size:13px"><b>Obs. do cliente:</b> ${esc(p.observacoes)}</p>`:''}
+
+    <div class="solto">
+      <div class="campo"><label>Status</label>
+        <select id="v-status">
+          ${['novo','digitado','faturado','cancelado'].map(s=>`<option${s===p.status?' selected':''}>${s}</option>`).join('')}
+        </select></div>
+      <div class="campo" style="flex:1"><label>Anotação interna</label>
+        <input id="v-obs" value="${esc(p.observacaoInterna)}"></div>
+      <button class="primaria" id="v-salvar">Salvar</button>
+      <button class="acao" onclick="document.getElementById('tapa').classList.remove('aberto')">Fechar</button>
+    </div>`;
+  $('tapa').classList.add('aberto');
+  $('v-salvar').onclick = async () => {
+    await api('/api/pedidos/' + numero, {
+      method:'PATCH', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ status: $('v-status').value, observacaoInterna: $('v-obs').value }),
+    });
+    fecharJanela(); abaPedidos();
+  };
+}
+
+/* ============================ importação ========================== */
+async function abaImportar() {
+  const situacao = await api('/api/importacao/situacao');
+  const historico = await api('/api/importacao/historico');
+  const achar = (t) => situacao.bases.find(b => b.tipo === t);
+
+  const quando = (t) => {
+    const b = achar(t);
+    return b ? data(b.atualizadoEm) : 'nunca';
+  };
+
+  $('aba-importar').innerHTML = `
+    <h1>Importar bases</h1>
+    <p class="sub">O sistema não guarda nada chumbado. Tudo vem destes três arquivos.</p>
+
+    <div class="painel">
+      <div class="import">
+        <div class="caixa-import">
+          <h3>1 · Catálogos em PDF</h3>
+          <p>Foto, descrição, especificações, embalagem e códigos por cor.
+             Pode subir vários de uma vez.</p>
+          <input type="file" id="f-catalogo" accept=".pdf" multiple>
+          <label for="f-catalogo">Escolher PDFs</label>
+          <div class="arqs" id="a-catalogo">último: ${quando('catalogo')} · ${situacao.contagem.catalogo||0} fichas</div>
+        </div>
+
+        <div class="caixa-import">
+          <h3>2 · Estoque disponível</h3>
+          <p>Mapas de chegadas: saldo de hoje, status e previsão mês a mês.
+             Os três formatos são aceitos juntos.</p>
+          <input type="file" id="f-estoque" accept=".xlsx,.xls" multiple>
+          <label for="f-estoque">Escolher planilhas</label>
+          <div class="arqs" id="a-estoque">último: ${quando('estoque')} · ${situacao.contagem.estoque||0} itens</div>
+        </div>
+
+        <div class="caixa-import">
+          <h3>3 · Tabela de preço</h3>
+          <p>A planilha "Tabela Maxprint", com as nove abas.
+             É esta importação que libera o carrinho.</p>
+          <input type="file" id="f-preco" accept=".xlsx,.xls" multiple>
+          <label for="f-preco">Escolher tabela</label>
+          <div class="arqs" id="a-preco">último: ${quando('preco')} · ${situacao.contagem.preco||0} itens</div>
+        </div>
+      </div>
+      <div id="resultado"></div>
+    </div>
+
+    <div class="painel">
+      <h2>Histórico de importações</h2>
+      <p class="d">Serve para responder "por que esse item sumiu do catálogo".</p>
+      ${!historico.length ? '<p style="color:var(--cinza);font-size:13px">Nenhuma importação ainda.</p>' : `
+      <table><thead><tr><th>Quando</th><th>Tipo</th><th>Arquivos</th><th>Resultado</th><th>Avisos</th></tr></thead>
+      <tbody>${historico.map(h => `<tr>
+        <td>${data(h.createdAt)}</td>
+        <td><b>${h.tipo}</b></td>
+        <td style="font-size:12px">${h.arquivos.map(esc).join('<br>')}</td>
+        <td style="font-size:12px">${h.erro ? `<span style="color:var(--vermelho)">${esc(h.erro)}</span>`
+          : `${h.relatorio.total||0} produtos · ${h.relatorio.comFoto||0} com foto`}</td>
+        <td style="font-size:12px">${h.avisos.length}</td>
+      </tr>`).join('')}</tbody></table>`}
+    </div>`;
+
+  ligarImport('catalogo');
+  ligarImport('estoque');
+  ligarImport('preco');
+}
+
+function ligarImport(tipo) {
+  const input = $('f-' + tipo);
+  input.addEventListener('change', async () => {
+    if (!input.files.length) return;
+    const fd = new FormData();
+    for (const f of input.files) fd.append('arquivos', f);
+    $('a-' + tipo).textContent = 'enviando ' + input.files.length + ' arquivo(s)...';
+    $('resultado').innerHTML = `<div class="aviso">Lendo os arquivos. Catálogo grande leva um minuto, porque cada foto é recortada da página.</div>`;
+    try {
+      const d = await api('/api/importacao/' + tipo, { method:'POST', body: fd });
+      $('resultado').innerHTML = relatorioHtml(d);
+      abaImportar();
+    } catch (e) {
+      $('resultado').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      $('a-' + tipo).textContent = 'falhou';
+    }
+  });
+}
+
+function relatorioHtml(d) {
+  const r = d.relatorio || {};
+  const linhas = [
+    ['Produtos no catálogo do cliente', r.total],
+    ['Com saldo hoje', r.disponiveis],
+    ['Só programados (sem saldo, com chegada prevista)', r.programados],
+    ['Com foto', r.comFoto],
+    ['Foto casada por modelo', r.fotoPorModelo],
+    ['Foto ilustrativa da linha', r.fotoIlustrativa],
+    ['Fora por falta de preço', (r.semPreco||[]).length],
+    ['Na tabela de preço mas sem linha de estoque', r.somenteNoPreco],
+    ['Desativados (saíram das planilhas)', r.desativados],
+  ].filter(l => l[1] !== undefined);
+
+  const semPreco = (r.semPreco||[]).filter(x => x.estoque > 0);
+
+  return `<div class="aviso ok">
+      <b>Importação concluída.</b>
+      <table style="margin-top:10px">${linhas.map(l =>
+        `<tr><td style="border:0;padding:3px 0">${l[0]}</td>
+             <td style="border:0;padding:3px 0;text-align:right"><b>${l[1]}</b></td></tr>`).join('')}</table>
+      ${(r.porArquivo||[]).length ? `<div style="margin-top:10px;font-size:12px">
+        ${r.porArquivo.map(a => `<div>${esc(a.arquivo)}: ${a.codigos ?? a.itens ?? 0} itens
+          ${a.comFoto!==undefined?`· ${a.comFoto} com foto`:''}
+          ${a.abasIgnoradas?`· ${a.abasIgnoradas} aba(s) ignorada(s)`:''}</div>`).join('')}
+      </div>` : ''}
+      ${semPreco.length ? `<div style="margin-top:10px;font-size:12px">
+        <b>${semPreco.length} itens com saldo ficaram de fora por não terem preço:</b><br>
+        ${semPreco.slice(0,12).map(x => esc(x.codigo)+' '+esc((x.descricao||'').slice(0,40))).join('<br>')}
+        ${semPreco.length>12?`<br>e mais ${semPreco.length-12}.`:''}
+      </div>` : ''}
+    </div>
+    ${(d.avisos||[]).length ? `<div class="aviso"><b>${d.avisos.length} avisos:</b><br>
+      ${d.avisos.slice(0,10).map(esc).join('<br>')}
+      ${d.avisos.length>10?`<br>e mais ${d.avisos.length-10}.`:''}</div>` : ''}`;
+}
+
+/* ============================= clientes =========================== */
+async function abaClientes() {
+  const lista = await api('/api/admin/usuarios');
+  const clientes = lista.filter(u => u.perfil === 'cliente');
+  const equipe = lista.filter(u => u.perfil !== 'cliente');
+
+  $('aba-clientes').innerHTML = `
+    <h1>Clientes e acessos</h1>
+    <p class="sub">Você cria o login e passa a senha. Não existe autocadastro.</p>
+
+    <div class="painel">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div><h2>Clientes</h2><p class="d" style="margin:0">O catálogo só abre quando você liberar.</p></div>
+        <button class="primaria" id="novo-cliente">Novo cliente</button>
+      </div>
+      ${!clientes.length ? '<p style="color:var(--cinza);font-size:13px">Nenhum cliente cadastrado.</p>' : `
+      <table><thead><tr>
+        <th>Cliente</th><th>Usuário</th><th>Desconto</th><th>Catálogo</th>
+        <th>Outlet</th><th>Programado</th><th>Último acesso</th><th></th>
+      </tr></thead><tbody>
+      ${clientes.map(c => `<tr>
+        <td><b>${esc(c.nome)}</b><div style="font-size:11px;color:var(--cinza)">${esc(c.razaoSocial||'')} ${esc(c.cnpj||'')}</div></td>
+        <td><span class="senha">${esc(c.usuario)}</span></td>
+        <td><b>${(c.desconto*100).toFixed(1)}%</b></td>
+        <td><span class="etiq ${c.catalogoStatus==='live'?'faturado':'cancelado'}">${c.catalogoStatus}</span></td>
+        <td>${c.verOutlet?'sim':'não'}</td>
+        <td>${c.permitirProgramado?'sim':'não'}</td>
+        <td style="font-size:12px">${c.ultimoAcesso?data(c.ultimoAcesso):'nunca'}</td>
+        <td style="white-space:nowrap">
+          <button class="acao" data-editar="${c._id}">Editar</button>
+          <button class="acao" data-senha="${c._id}">Nova senha</button>
+          <button class="acao" data-liberar="${c._id}" data-atual="${c.catalogoStatus}">
+            ${c.catalogoStatus==='live'?'Travar':'Liberar'}</button>
+        </td>
+      </tr>`).join('')}</tbody></table>`}
+    </div>
+
+    <div class="painel">
+      <h2>Equipe</h2>
+      <p class="d">Quem enxerga o painel. Admin mexe em tudo, interno só acompanha.</p>
+      <table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Último acesso</th></tr></thead>
+      <tbody>${equipe.map(u => `<tr>
+        <td>${esc(u.nome)}</td><td><span class="senha">${esc(u.usuario)}</span></td>
+        <td>${esc(u.perfil)}</td><td style="font-size:12px">${u.ultimoAcesso?data(u.ultimoAcesso):'nunca'}</td>
+      </tr>`).join('')}</tbody></table>
+    </div>`;
+
+  $('novo-cliente').onclick = () => formCliente(null);
+  document.querySelectorAll('[data-editar]').forEach(b =>
+    b.onclick = () => formCliente(clientes.find(c => c._id === b.dataset.editar)));
+  document.querySelectorAll('[data-senha]').forEach(b =>
+    b.onclick = async () => {
+      const d = await api('/api/admin/usuarios/' + b.dataset.senha + '/senha', {
+        method:'POST', headers:{'content-type':'application/json'}, body:'{}' });
+      alert('Nova senha: ' + d.senha + '\n\nAnote agora, ela não aparece de novo.');
+    });
+  document.querySelectorAll('[data-liberar]').forEach(b =>
+    b.onclick = async () => {
+      await api('/api/admin/usuarios/' + b.dataset.liberar, {
+        method:'PATCH', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ catalogoStatus: b.dataset.atual === 'live' ? 'travado' : 'live' }) });
+      abaClientes();
+    });
+}
+
+function formCliente(c) {
+  const novo = !c;
+  c = c || { desconto:0, catalogoStatus:'travado', verOutlet:true, permitirProgramado:true };
+  $('janela').innerHTML = `
+    <h1>${novo ? 'Novo cliente' : 'Editar cliente'}</h1>
+    <p class="sub">O desconto fica só aqui. O cliente vê o preço já com ele aplicado.</p>
+    <div class="campos">
+      <div class="campo"><label>Nome de contato *</label><input id="c-nome" value="${esc(c.nome||'')}"></div>
+      <div class="campo"><label>Usuário (login) *</label>
+        <input id="c-usuario" value="${esc(c.usuario||'')}" ${novo?'':'readonly'}></div>
+      <div class="campo cheio"><label>Razão social</label><input id="c-razao" value="${esc(c.razaoSocial||'')}"></div>
+      <div class="campo"><label>CNPJ</label><input id="c-cnpj" value="${esc(c.cnpj||'')}"></div>
+      <div class="campo"><label>Telefone</label><input id="c-tel" value="${esc(c.telefone||'')}"></div>
+      <div class="campo cheio"><label>Endereço de entrega</label><input id="c-end" value="${esc(c.endereco||'')}"></div>
+      <div class="campo"><label>Transportadora padrão</label><input id="c-transp" value="${esc(c.transportadora||'')}"></div>
+      <div class="campo"><label>Vendedor</label><input id="c-vend" value="${esc(c.vendedor||'')}"></div>
+      <div class="campo"><label>E-mail</label><input id="c-email" value="${esc(c.email||'')}"></div>
+      <div class="campo"><label>Desconto (%) *</label>
+        <input id="c-desc" type="number" step="0.1" min="0" max="95" value="${((c.desconto||0)*100).toFixed(1)}"></div>
+      <div class="campo"><label>Catálogo</label>
+        <select id="c-status">
+          <option value="travado"${c.catalogoStatus==='travado'?' selected':''}>Travado</option>
+          <option value="live"${c.catalogoStatus==='live'?' selected':''}>Liberado</option>
+        </select></div>
+      <div class="campo"><label>Ver outlet</label>
+        <select id="c-outlet"><option value="sim"${c.verOutlet!==false?' selected':''}>Sim</option>
+        <option value="nao"${c.verOutlet===false?' selected':''}>Não</option></select></div>
+      <div class="campo"><label>Pode pedir programado</label>
+        <select id="c-prog"><option value="sim"${c.permitirProgramado!==false?' selected':''}>Sim</option>
+        <option value="nao"${c.permitirProgramado===false?' selected':''}>Não</option></select></div>
+    </div>
+    <div id="c-erro" class="aviso erro" style="display:none"></div>
+    <div class="solto" style="margin-top:16px;justify-content:flex-end">
+      <button class="acao" onclick="document.getElementById('tapa').classList.remove('aberto')">Cancelar</button>
+      <button class="primaria" id="c-salvar">${novo?'Criar e gerar senha':'Salvar'}</button>
+    </div>`;
+  $('tapa').classList.add('aberto');
+
+  $('c-salvar').onclick = async () => {
+    const corpo = {
+      nome: $('c-nome').value.trim(),
+      usuario: $('c-usuario').value.trim(),
+      razaoSocial: $('c-razao').value.trim(),
+      cnpj: $('c-cnpj').value.trim(),
+      telefone: $('c-tel').value.trim(),
+      endereco: $('c-end').value.trim(),
+      transportadora: $('c-transp').value.trim(),
+      vendedor: $('c-vend').value.trim(),
+      email: $('c-email').value.trim(),
+      desconto: Number($('c-desc').value || 0) / 100,
+      catalogoStatus: $('c-status').value,
+      verOutlet: $('c-outlet').value === 'sim',
+      permitirProgramado: $('c-prog').value === 'sim',
+      perfil: 'cliente',
+    };
+    try {
+      if (novo) {
+        const d = await api('/api/admin/usuarios', {
+          method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(corpo) });
+        $('janela').innerHTML = `
+          <h1>Cliente criado</h1>
+          <p class="sub">Mande estes dados para ele. A senha não aparece de novo.</p>
+          <div class="painel">
+            <p>Endereço: <span class="senha">${location.origin}/login</span></p>
+            <p>Usuário: <span class="senha">${esc(d.usuario)}</span></p>
+            <p>Senha: <span class="senha">${esc(d.senha)}</span></p>
+          </div>
+          <div class="aviso">O catálogo dele está <b>travado</b>. Confira a base e o desconto, depois use o botão Liberar.</div>
+          <div class="solto" style="justify-content:flex-end">
+            <button class="primaria" onclick="document.getElementById('tapa').classList.remove('aberto');abaClientes()">Pronto</button>
+          </div>`;
+      } else {
+        await api('/api/admin/usuarios/' + c._id, {
+          method:'PATCH', headers:{'content-type':'application/json'}, body: JSON.stringify(corpo) });
+        fecharJanela(); abaClientes();
+      }
+    } catch (e) {
+      $('c-erro').textContent = e.message; $('c-erro').style.display = 'block';
+    }
+  };
+}
+
+/* ============================= produtos =========================== */
+async function abaProdutos(q = '', semFoto = false) {
+  const lista = await api(`/api/admin/produtos?q=${encodeURIComponent(q)}&semFoto=${semFoto?'sim':'nao'}`);
+  $('aba-produtos').innerHTML = `
+    <h1>Produtos e fotos</h1>
+    <p class="sub">Aqui você confere o que o cliente vê e anexa foto no que o catálogo não ilustra.</p>
+    <div class="painel">
+      <div class="solto">
+        <div class="campo" style="flex:1"><label>Buscar</label>
+          <input id="p-busca" value="${esc(q)}" placeholder="código, nome ou descrição"></div>
+        <button class="acao" id="p-todos" style="padding:9px 14px">Todos</button>
+        <button class="acao" id="p-semfoto" style="padding:9px 14px">Só sem foto</button>
+      </div>
+      <table><thead><tr>
+        <th>Foto</th><th>Código</th><th>Produto</th><th>Categoria</th>
+        <th>Preço tabela</th><th>Estoque</th><th>Status</th><th></th>
+      </tr></thead><tbody>
+      ${lista.map(p => `<tr>
+        <td>${(p.imagemManual||p.imagem)
+          ? `<img src="/img/${p.imagemManual||p.imagem}" style="width:38px;height:38px;object-fit:contain">`
+          : `<div style="width:38px;height:38px;background:var(--claro);border-radius:6px"></div>`}</td>
+        <td style="font-size:12px">${esc(p.codigoOriginal||p.codigo)}</td>
+        <td style="font-size:12.5px">${esc(p.nome)}
+          ${p.imagemIlustrativa && !p.imagemManual ? '<div style="font-size:10.5px;color:var(--cinza)">foto ilustrativa da linha</div>':''}</td>
+        <td style="font-size:12px">${esc(p.categoria)}</td>
+        <td>${dinheiro(p.precoBase)}</td>
+        <td><b>${(p.estoque||0).toLocaleString('pt-BR')}</b>
+          ${p.previstoTotal?`<div style="font-size:11px;color:var(--azul)">+${p.previstoTotal} previsto</div>`:''}</td>
+        <td style="font-size:11.5px">${esc(p.status)}</td>
+        <td><label class="acao" style="cursor:pointer">Trocar foto
+          <input type="file" accept="image/*" style="display:none" data-foto="${p.codigo}"></label></td>
+      </tr>`).join('')}</tbody></table>
+      ${!lista.length?'<p style="color:var(--cinza);font-size:13px">Nada encontrado.</p>':''}
+    </div>`;
+
+  $('p-busca').addEventListener('keydown', (e) => { if (e.key==='Enter') abaProdutos(e.target.value, semFoto); });
+  $('p-todos').onclick = () => abaProdutos('', false);
+  $('p-semfoto').onclick = () => abaProdutos('', true);
+  document.querySelectorAll('[data-foto]').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      if (!inp.files.length) return;
+      const fd = new FormData(); fd.append('imagem', inp.files[0]);
+      await api('/api/importacao/foto/' + inp.dataset.foto, { method:'POST', body: fd });
+      abaProdutos(q, semFoto);
+    });
+  });
+}
+
+/* ============================ relatórios ========================== */
+async function abaRelatorios() {
+  const [clientes, produtos, periodo] = await Promise.all([
+    api('/api/admin/relatorio/clientes'),
+    api('/api/admin/relatorio/produtos'),
+    api('/api/admin/relatorio/periodo'),
+  ]);
+
+  const tabela = (titulo, desc, cabecalhos, linhas) => `
+    <div class="painel"><h2>${titulo}</h2><p class="d">${desc}</p>
+    ${!linhas.length?'<p style="color:var(--cinza);font-size:13px">Sem dados no período.</p>':`
+    <table><thead><tr>${cabecalhos.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+    <tbody>${linhas.join('')}</tbody></table>`}</div>`;
+
+  $('aba-relatorios').innerHTML = `
+    <h1>Relatórios</h1>
+    <p class="sub">Últimos 90 dias, fora os pedidos cancelados.</p>
+    <div class="grade-rel">
+      ${tabela('Por cliente','Quem mais comprou.',['Cliente','Pedidos','Peças','Total'],
+        clientes.map(c=>`<tr><td>${esc(c._id||'-')}</td><td>${c.pedidos}</td><td>${c.pecas}</td>
+          <td><b>${dinheiro(c.total)}</b></td></tr>`))}
+      ${tabela('Por produto','O que mais sai.',['Código','Produto','Peças','Total'],
+        produtos.map(p=>`<tr><td style="font-size:12px">${esc(p.codigo)}</td>
+          <td style="font-size:12.5px">${esc(p.nome)}</td><td>${p.pecas}</td>
+          <td><b>${dinheiro(p.total)}</b></td></tr>`))}
+    </div>
+    ${tabela('Por mês','Evolução do faturamento pedido.',['Mês','Pedidos','Peças','Total'],
+      periodo.map(p=>`<tr><td>${esc(p._id)}</td><td>${p.pedidos}</td><td>${p.pecas}</td>
+        <td><b>${dinheiro(p.total)}</b></td></tr>`))}`;
+}
+
+/* =========================== configuração ========================= */
+async function abaConfig() {
+  const c = await api('/api/admin/config');
+  $('aba-config').innerHTML = `
+    <h1>Configuração</h1>
+    <p class="sub">As regras que o sistema aplica. Mudança aqui vale na hora, sem mexer em código.</p>
+    <div class="painel">
+      <div class="campos">
+        <div class="campo"><label>Pedido mínimo (R$)</label>
+          <input id="k-min" type="number" step="0.01" value="${c.pedidoMinimo}"></div>
+        <div class="campo"><label>Valor que aciona o frete CIF (R$)</label>
+          <input id="k-cif" type="number" step="0.01" value="${c.valorFreteCif}"></div>
+        <div class="campo"><label>Itens no ranking de cada categoria</label>
+          <input id="k-rank" type="number" min="1" value="${c.itensRanking}"></div>
+        <div class="campo"><label>Status do estoque que NÃO entram no catálogo</label>
+          <input id="k-status" value="${(c.statusBloqueados||[]).join(', ')}"
+                 placeholder="ex: ATC (deixe vazio para aceitar todos)"></div>
+        <div class="campo cheio"><label>E-mails que recebem o aviso de pedido novo</label>
+          <input id="k-emails" value="${(c.emailsAviso||[]).join(', ')}"></div>
+      </div>
+      <div class="aviso" style="margin-top:14px">
+        <b>Regra de prazo em vigor:</b> até 30 dias de prazo médio o valor é o de tabela menos o
+        desconto do cliente. Entre 31 e 60 dias entra acréscimo proporcional, chegando a 2% nos
+        60 dias. Acima de 60 dias o pedido não fecha e abre negociação com o representante.
+      </div>
+      <div class="solto" style="margin-top:14px;justify-content:flex-end">
+        <button class="primaria" id="k-salvar">Salvar</button>
+      </div>
+      <div id="k-ok"></div>
+    </div>`;
+
+  $('k-salvar').onclick = async () => {
+    await api('/api/admin/config', {
+      method:'PUT', headers:{'content-type':'application/json'},
+      body: JSON.stringify({
+        pedidoMinimo: Number($('k-min').value),
+        valorFreteCif: Number($('k-cif').value),
+        itensRanking: Number($('k-rank').value),
+        statusBloqueados: $('k-status').value.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean),
+        emailsAviso: $('k-emails').value.split(',').map(s=>s.trim()).filter(Boolean),
+      }),
+    });
+    $('k-ok').innerHTML = '<div class="aviso ok">Salvo.</div>';
+  };
+}
+
+/* ============================== início ============================ */
+(async () => {
+  EU = await api('/api/auth/eu');
+  $('quem').textContent = EU.nome + ' · ' + EU.perfil;
+  if (EU.perfil !== 'admin') {
+    document.querySelectorAll('.abas button').forEach(b => {
+      if (['importar','clientes','config'].includes(b.dataset.aba)) b.style.display = 'none';
+    });
+  }
+  abaPedidos();
+})();
+</script>
+</body>
+</html>

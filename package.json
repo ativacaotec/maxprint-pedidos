@@ -1,0 +1,33 @@
+{
+  "name": "maxprint-pedidos",
+  "version": "1.0.0",
+  "description": "Sistema de digitação de pedidos de pronto entrega da Maxprint — Ativação Group",
+  "main": "server.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "create-admin": "node scripts/create_admin.js",
+    "teste": "node scripts/teste_ponta_a_ponta.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.8.1",
+    "connect-mongo": "^5.1.0",
+    "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
+    "express": "^4.22.2",
+    "express-session": "^1.19.0",
+    "mongoose": "^8.24.2",
+    "multer": "^1.4.5-lts.1",
+    "pdfjs-dist": "^6.1.200",
+    "pdfkit": "^0.19.1",
+    "sharp": "^0.35.3",
+    "xlsx": "^0.18.5"
+  },
+  "private": true
+}
