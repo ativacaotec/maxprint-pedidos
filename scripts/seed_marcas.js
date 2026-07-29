@@ -82,6 +82,9 @@ const MARCAS = [
     // Sem acréscimo de preço por prazo — diferente da Maxprint, o prazo aqui
     // só muda a condição, não o valor.
     aplicarAcrescimoPrazo: false,
+    // A Samsonite não manda previsão de chegada, então item zerado precisa
+    // continuar visível e marcado — senão some do catálogo (ver models/Marca.js).
+    mostrarSemEstoque: true,
     subMarcas: [
       { nome: 'Samsonite', cor: '#0B6BB3' },
       { nome: 'American Tourister', cor: '#F5891F' },

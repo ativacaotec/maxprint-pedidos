@@ -100,6 +100,42 @@ async function entrar(pagina, usuario, senha) {
     await p.click('#novo-cliente');
     await p.waitForTimeout(400);
     await foto(p, '06-form-cliente-marcas');
+    await p.click('#tapa', { position: { x: 5, y: 5 } });
+    await p.waitForTimeout(400);
+
+    // --- troca de senha do cliente ---
+    // Miro no cliente descartável: trocar a senha de qualquer outro derrubaria
+    // os logins que os testes seguintes usam.
+    await p.evaluate(() => {
+      const linha = [...document.querySelectorAll('tbody tr')]
+        .find((tr) => tr.textContent.includes('ZZ Cliente Descartavel'));
+      linha.querySelector('[data-senha]').click();
+    });
+    await p.waitForTimeout(600);
+    const temCampoSenha = await p.$('#s-nova');
+    conferir('a tela de nova senha deixa escolher a senha', !!temCampoSenha);
+    if (temCampoSenha) {
+      await p.click('#s-sortear');
+      await p.waitForTimeout(700);
+      const sorteada = await p.inputValue('#s-nova');
+      conferir('e o botão sorteia uma senha', /^[a-z]{4}-[0-9]{4}$/.test(sorteada), sorteada);
+      await foto(p, '07-nova-senha');
+
+      await p.fill('#s-nova', 'abc');
+      await p.click('#s-salvar');
+      await p.waitForTimeout(600);
+      const erroCurta = await p.$eval('#s-erro', (e) => e.style.display !== 'none' ? e.textContent : '').catch(() => '');
+      conferir('senha curta demais é recusada', /6 caracteres/.test(erroCurta), JSON.stringify(erroCurta));
+
+      await p.fill('#s-nova', 'senhaescolhida123');
+      await p.click('#s-salvar');
+      await p.waitForTimeout(900);
+      const confirmou = await p.textContent('#janela');
+      conferir('senha escolhida é aceita e mostrada de volta',
+        /Senha trocada/.test(confirmou) && /senhaescolhida123/.test(confirmou));
+      await p.click('#tapa', { position: { x: 5, y: 5 } });
+      await p.waitForTimeout(300);
+    }
 
     /* ====================== catálogo do cliente ======================== */
     const ctx2 = await navegador.newContext({ viewport: { width: 1400, height: 1000 } });
@@ -186,6 +222,30 @@ async function entrar(pagina, usuario, senha) {
     await foto(c, '14-acima-do-saldo');
     await c.fill(BAHIA, '20');
     await c.waitForTimeout(1200);
+
+    // --- item sem saldo e sem previsão continua visível, marcado ---
+    // Procuro o card pelo nome, sem depender da busca: o que importa é que o
+    // item zerado ESTEJA na tela, não como se chega até ele.
+    const zerado = await c.evaluate(() => {
+      const card = [...document.querySelectorAll('.card')]
+        .find((el) => (el.querySelector('.nome') || {}).textContent === 'ZERADO SPINNER 55');
+      if (!card) return null;
+      return {
+        selo: (card.querySelector('.selo.sem') || {}).textContent || '',
+        temCampoQtd: !!card.querySelector('input[data-qtd]'),
+        temAviso: !!card.querySelector('.aviso-sem-estoque'),
+        esmaecido: card.classList.contains('sem-estoque'),
+      };
+    });
+    conferir('item sem estoque APARECE no catálogo da Samsonite', !!zerado,
+      zerado === null ? 'nao achei o card' : '');
+    if (zerado) {
+      conferir('e sai marcado como SEM ESTOQUE', zerado.selo.trim() === 'SEM ESTOQUE', JSON.stringify(zerado.selo));
+      conferir('sem campo de quantidade (nao da para pedir)', !zerado.temCampoQtd);
+      conferir('com o aviso "Sem estoque no momento"', zerado.temAviso);
+      conferir('e com a foto esmaecida', zerado.esmaecido);
+      await foto(c, '15-sem-estoque');
+    }
 
     // --- cliente de uma marca só não vê a barra de abas ---
     const ctxSo = await navegador.newContext({ viewport: { width: 1400, height: 1000 } });

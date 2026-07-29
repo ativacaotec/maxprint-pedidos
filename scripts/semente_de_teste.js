@@ -39,6 +39,13 @@ async function semear() {
     nome: 'Cliente Só Maxprint', usuario: 'sominha', senhaHash: bcrypt.hashSync('teste123', 10),
     perfil: 'cliente', catalogoStatus: 'live', desconto: 0.1, marcasPermitidas: ['maxprint'],
   });
+  // Existe só para o teste de troca de senha ter em quem mexer. Sem ele, o
+  // teste trocava a senha de um cliente que os testes seguintes usam para
+  // entrar — e derrubava a si mesmo.
+  await Usuario.create({
+    nome: 'ZZ Cliente Descartavel', usuario: 'descartavel', senhaHash: bcrypt.hashSync('teste123', 10),
+    perfil: 'cliente', catalogoStatus: 'live', desconto: 0, marcasPermitidas: ['maxprint'],
+  });
 
   /* ---- produtos Maxprint ---- */
   const maxprint = [
@@ -77,6 +84,16 @@ async function semear() {
       grupoCores: codigosBahia, ativo: true, imagem: '',
     });
   }
+
+  // Item zerado E sem previsão: é o caso que a regra antiga apagava do
+  // catálogo. Serve para o teste conferir que ele aparece marcado.
+  await Produto.create({
+    marcaSlug: 'samsonite', codigo: '99999900001', codigoOriginal: '99999900001  U',
+    nome: 'ZERADO SPINNER 55', categoria: 'Samsonite', subMarca: 'Samsonite',
+    grupo: 'ZERADO', tipoProduto: 'SPINNER 55', cor: 'BLACK',
+    precoBase: 500, precoCheio: 500, estoque: 0, previstoTotal: 0,
+    status: 'SEM SALDO', grupoCores: [], ativo: true, imagem: '',
+  });
 
   const outros = [
     ['15507810411', 'XTREM CONVERTIBLE BACKPACK', 'Xtrem', 'Xtrem', 'GREY MELANGE', 349.9, 25, true, 30],
