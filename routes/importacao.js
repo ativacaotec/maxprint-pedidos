@@ -442,6 +442,157 @@ router.post(
   }
 );
 
+/* ------------------------------------------------------------------ *
+ * Estoque da Samsonite (planilha "Sortimento Produtos Wholesale")
+ *
+ * É a planilha que atualiza o saldo. Rápida (não tem PDF para rasterizar),
+ * então roda na própria requisição, sem tarefa em segundo plano.
+ * ------------------------------------------------------------------ */
+
+const { importarEstoqueSamsonite } = require('../lib/importEstoqueSamsonite');
+
+router.post('/samsonite/estoque', upload.array('arquivos', 4), async (req, res) => {
+  const inicio = Date.now();
+  const MARCA = 'samsonite';
+  try {
+    if (!req.files || !req.files.length) {
+      return res.status(400).json({ erro: 'Escolha a planilha de estoque da Samsonite.' });
+    }
+
+    const itens = [];
+    const avisos = [];
+    let relatorioBase = {};
+    for (const f of req.files) {
+      const r = importarEstoqueSamsonite(f.path);
+      itens.push(...r.itens);
+      avisos.push(...r.avisos.map((a) => `${f.originalname}: ${a}`));
+      relatorioBase = r.relatorio;
+    }
+
+    // Quem já está no catálogo, e em que condição. Preciso saber de duas
+    // coisas antes de gravar: se o item existe e se ele está em promoção.
+    const existentes = await Produto.find({ marcaSlug: MARCA })
+      .select('codigo emPromocao precoBase precoCheio descontoPromo').lean();
+    const mapa = new Map(existentes.map((p) => [p.codigo, p]));
+
+    let atualizados = 0, criados = 0, promoPreservada = 0;
+    const operacoes = [];
+
+    for (const it of itens) {
+      const atual = mapa.get(it.codigo);
+
+      // O preço da planilha é o CHEIO (ver lib/importEstoqueSamsonite.js).
+      // Item em promoção mantém o preço promocional: deixar a planilha
+      // sobrescrever apagaria o desconto sem ninguém notar.
+      const emPromocao = !!(atual && atual.emPromocao);
+      if (emPromocao) promoPreservada++;
+
+      const campos = {
+        marcaSlug: MARCA,
+        codigo: it.codigo,
+        codigoOriginal: it.codigoOriginal,
+        subMarca: it.subMarca,
+        categoria: it.subMarca,
+        grupo: it.grupo,
+        tipoProduto: it.tipoProduto,
+        cor: it.cor,
+        ncm: it.ncm,
+        precoVarejo: it.precoVarejo,
+        estoque: it.estoque,
+        status: it.estoque > 0 ? 'DISPONIVEL' : 'SEM SALDO',
+        ativo: true,
+      };
+
+      if (emPromocao) {
+        // Só o preço de tabela acompanha a planilha; o que o cliente paga
+        // continua sendo o promocional já gravado.
+        campos.precoCheio = it.precoCheio || atual.precoCheio || 0;
+      } else {
+        campos.precoCheio = it.precoCheio;
+        campos.precoBase = it.precoCheio;
+      }
+
+      if (!atual) {
+        criados++;
+        campos.nome = [it.grupo, it.tipoProduto].filter(Boolean).join(' ') || it.tipoProduto || it.grupo;
+        campos.precoBase = it.precoCheio;
+        campos.imagem = '';
+        campos.grupoCores = [];
+      } else {
+        atualizados++;
+      }
+
+      operacoes.push({
+        updateOne: {
+          filter: { codigo: it.codigo, marcaSlug: MARCA },
+          update: { $set: campos },
+          upsert: true,
+        },
+      });
+    }
+
+    if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
+
+    // Item que sumiu da planilha: zero o saldo em vez de desativar. A
+    // planilha é de sortimento, não de catálogo — sumir dela quer dizer "sem
+    // saldo agora", não "produto acabou". Desativar apagaria do catálogo um
+    // item que volta na semana seguinte.
+    const vivos = itens.map((i) => i.codigo);
+    const foraDaPlanilha = await Produto.updateMany(
+      { marcaSlug: MARCA, codigo: { $nin: vivos }, estoque: { $gt: 0 } },
+      { $set: { estoque: 0, status: 'SEM SALDO' } }
+    );
+
+    // Os grupos de cor precisam ser refeitos: itens novos entram nas linhas
+    // que já existiam, e sem isso o card não mostraria a cor nova.
+    const todos = await Produto.find({ marcaSlug: MARCA, ativo: true })
+      .select('codigo subMarca grupo tipoProduto').lean();
+    const porChave = new Map();
+    for (const p of todos) {
+      const chave = [p.subMarca, p.grupo, p.tipoProduto].join('|').toUpperCase();
+      if (!porChave.has(chave)) porChave.set(chave, []);
+      porChave.get(chave).push(p.codigo);
+    }
+    const opCores = [];
+    let gruposDeCor = 0;
+    for (const codigos of porChave.values()) {
+      const grupo = codigos.length > 1 ? codigos : [];
+      if (grupo.length) gruposDeCor++;
+      for (const codigo of codigos) {
+        opCores.push({ updateOne: { filter: { codigo, marcaSlug: MARCA }, update: { $set: { grupoCores: grupo } } } });
+      }
+    }
+    if (opCores.length) await Produto.bulkWrite(opCores, { ordered: false });
+
+    const relatorio = {
+      ...relatorioBase,
+      atualizados,
+      criados,
+      promoPreservada,
+      zeradosPorSumirDaPlanilha: foraDaPlanilha.modifiedCount || 0,
+      gruposDeCor,
+      totalNoCatalogo: await Produto.countDocuments({ marcaSlug: MARCA, ativo: true }),
+    };
+
+    await Importacao.create({
+      tipo: 'samsonite',
+      arquivos: req.files.map((f) => f.originalname),
+      usuario: req.session.usuario.usuario,
+      duracaoSegundos: Math.round((Date.now() - inicio) / 1000),
+      relatorio,
+      avisos,
+      erro: '',
+    });
+
+    limpar(req.files);
+    res.json({ ok: true, relatorio, avisos });
+  } catch (e) {
+    console.error('[import estoque samsonite]', e);
+    limpar(req.files);
+    res.status(500).json({ erro: `Falhou ao ler a planilha de estoque: ${e.message}` });
+  }
+});
+
 router.get('/samsonite/status/:id', (req, res) => {
   const t = tarefas.get(req.params.id);
   if (!t) return res.status(404).json({ erro: 'Importação não encontrada (o servidor pode ter reiniciado).' });
