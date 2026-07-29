@@ -105,6 +105,13 @@ main{ flex:1; padding:18px 20px 150px; min-width:0; }
 .selo.a{ background:var(--laranja); color:#fff; }
 .selo.out{ background:var(--vermelho); color:#fff; }
 .selo.prog{ background:var(--azul); color:#fff; }
+.selo.sem{ background:#6B6B70; color:#fff; }
+/* Item sem estoque continua no catálogo para consulta, mas com a foto
+   esmaecida e sem campo de quantidade — fica claro que não dá para pedir. */
+.card.sem-estoque .foto{ opacity:.45; }
+.card.sem-estoque .preco{ color:var(--cinza); }
+.aviso-sem-estoque{ font-size:11.5px; color:#6B6B70; background:var(--claro);
+  border-radius:7px; padding:7px 9px; text-align:center; margin-top:auto; }
 .card .foto{ height:132px; display:flex; align-items:center; justify-content:center;
              margin-bottom:9px; }
 .card .foto img{ max-width:100%; max-height:132px; object-fit:contain; }
@@ -818,16 +825,24 @@ function cardHtml(card) {
   const selos = [
     card.curvaA ? '<span class="selo a">CURVA A</span>' : '',
     card.outlet ? '<span class="selo out">OUTLET</span>' : '',
-    !c.disponivel ? '<span class="selo prog">PROGRAMADO</span>' : '',
+    c.semEstoque ? '<span class="selo sem">SEM ESTOQUE</span>' : '',
+    !c.disponivel && !c.semEstoque ? '<span class="selo prog">PROGRAMADO</span>' : '',
   ].join('');
 
   const foto = c.imagem
     ? `<img src="/img/${c.imagem}" loading="lazy" alt="${escapar(card.nome)}">`
     : `<div class="vazio">sem foto</div>`;
 
+  // Três situações diferentes, e confundi-las engana o cliente:
+  //   tem saldo        -> quantos há
+  //   sem saldo, com previsão -> quando chega (dá para reservar)
+  //   sem saldo, sem previsão -> só "indisponível"; prometer "chega em breve"
+  //                              sem ter data é promessa que ninguém fez.
   const estoque = c.disponivel
     ? `<div class="estoque ok">${c.estoque.toLocaleString('pt-BR')} disponíveis</div>`
-    : `<div class="estoque prog">Chega em ${escapar((c.chegadas[0]||{}).rotulo || 'breve')} · ${c.previsto.toLocaleString('pt-BR')} peças</div>`;
+    : c.semEstoque
+      ? '<div class="estoque" style="color:#6B6B70">Indisponível no momento</div>'
+      : `<div class="estoque prog">Chega em ${escapar((c.chegadas[0]||{}).rotulo || 'breve')} · ${c.previsto.toLocaleString('pt-BR')} peças</div>`;
 
   const cores = temCores ? `<div class="cores">${card.cores.map(x => `
       <button class="cor${x.codigo===c.codigo?' ativa':''}" data-card="${card.chave}" data-cor="${x.codigo}"
@@ -835,7 +850,12 @@ function cardHtml(card) {
         ${x.imagem ? `<img src="/img/${x.imagem}" alt="">` : ''}
       </button>`).join('')}</div>` : '';
 
-  const controles = `
+  // Item sem estoque aparece para consulta, mas sem campo de quantidade: o
+  // cliente vê que o produto existe e não perde tempo digitando algo que o
+  // servidor recusaria.
+  const controles = c.semEstoque
+    ? '<div class="aviso-sem-estoque">Sem estoque no momento</div>'
+    : `
     <div class="qtd">
       <button data-menos="${c.codigo}">−</button>
       <input type="number" min="0" max="${c.limite}" step="1" value="${qtd}"
@@ -857,7 +877,7 @@ function cardHtml(card) {
     : '';
 
   if (S.modoLista) {
-    return `<div class="card${qtd?' tem':''}" data-card="${card.chave}">
+    return `<div class="card${qtd?' tem':''}${c.semEstoque?' sem-estoque':''}" data-card="${card.chave}">
       <div class="foto">${foto}</div>
       <div class="meio">
         <div class="selos">${selos}</div>
@@ -875,7 +895,7 @@ function cardHtml(card) {
     </div>`;
   }
 
-  return `<div class="card${qtd?' tem':''}" data-card="${card.chave}">
+  return `<div class="card${qtd?' tem':''}${c.semEstoque?' sem-estoque':''}" data-card="${card.chave}">
     <div class="selos">${selos}</div>
     <div class="foto" ${temCores?`data-ver-cores="${card.chave}" style="cursor:pointer"`:''}>${foto}</div>
     <div class="cod">${escapar(c.codigoOriginal || c.codigo)}</div>
@@ -920,7 +940,9 @@ function abrirCores(chave) {
             </div>
             ${x.disponivel
               ? `<div class="estoque ok">${x.estoque.toLocaleString('pt-BR')} disponíveis</div>`
-              : `<div class="estoque prog">Chega em ${escapar((x.chegadas[0]||{}).rotulo || 'breve')} · ${x.previsto.toLocaleString('pt-BR')} peças</div>`}
+              : x.semEstoque
+                ? '<div class="estoque" style="color:#6B6B70">Indisponível no momento</div>'
+                : `<div class="estoque prog">Chega em ${escapar((x.chegadas[0]||{}).rotulo || 'breve')} · ${x.previsto.toLocaleString('pt-BR')} peças</div>`}
             <div class="qtd">
               <button data-jmenos="${x.codigo}">−</button>
               <input type="number" min="0" max="${x.limite}" step="1" value="${q}"

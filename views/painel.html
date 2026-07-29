@@ -418,6 +418,23 @@ async function abaImportar() {
         </div>
       </div>
       <div id="resultado-sam"></div>
+
+      <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
+      <h2 style="font-size:14px">Estoque da Samsonite</h2>
+      <p class="d">A planilha <b>Sortimento Produtos Wholesale</b>, que a Samsonite manda com o
+         saldo atualizado. Suba sempre que chegar uma nova: ela atualiza o saldo, corrige o preço
+         de tabela e cadastra item novo que ainda não estava no catálogo.
+         <b>Promoção não é sobrescrita</b> — a planilha traz só o preço cheio.</p>
+      <div class="import">
+        <div class="caixa-import">
+          <h3>Planilha de estoque</h3>
+          <p>Duas abas (Representantes e BTS). Leva alguns segundos.</p>
+          <input type="file" id="f-sam-estoque" accept=".xlsx,.xls" multiple>
+          <label for="f-sam-estoque">Escolher planilha</label>
+          <div class="arqs" id="a-sam-estoque">nenhuma escolhida</div>
+        </div>
+      </div>
+      <div id="resultado-sam-estoque"></div>
     </div>`}
 
     <div class="painel">
@@ -438,7 +455,56 @@ async function abaImportar() {
   ligarImport('catalogo');
   ligarImport('estoque');
   ligarImport('preco');
-  if (temSamsonite) ligarImportSamsonite();
+  if (temSamsonite) { ligarImportSamsonite(); ligarEstoqueSamsonite(); }
+}
+
+/** A planilha de estoque é rápida, então dispara ao escolher o arquivo. */
+function ligarEstoqueSamsonite() {
+  const input = $('f-sam-estoque');
+  if (!input) return;
+  input.addEventListener('change', async () => {
+    if (!input.files.length) return;
+    const fd = new FormData();
+    for (const f of input.files) fd.append('arquivos', f);
+    $('a-sam-estoque').textContent = input.files[0].name;
+    $('resultado-sam-estoque').innerHTML = '<div class="aviso">Lendo a planilha e atualizando o catálogo...</div>';
+    try {
+      const d = await api('/api/importacao/samsonite/estoque', { method:'POST', body: fd });
+      $('resultado-sam-estoque').innerHTML = relatorioEstoqueSamsoniteHtml(d);
+      abaImportar();
+    } catch (e) {
+      $('resultado-sam-estoque').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+    }
+  });
+}
+
+function relatorioEstoqueSamsoniteHtml(d) {
+  const r = d.relatorio || {};
+  const linhas = [
+    ['Itens lidos na planilha', r.totalValido],
+    ['Com saldo hoje', r.comSaldo],
+    ['Sem saldo (aparecem marcados no catálogo)', r.semSaldo],
+    ['Peças em estoque', (r.pecasEmEstoque || 0).toLocaleString('pt-BR')],
+    ['Atualizados', r.atualizados],
+    ['Cadastrados agora (não estavam no catálogo)', r.criados],
+    ['Com promoção preservada (preço não mexido)', r.promoPreservada],
+    ['Zerados por sumir da planilha', r.zeradosPorSumirDaPlanilha],
+    ['Grupos de cor', r.gruposDeCor],
+    ['Total no catálogo da Samsonite', r.totalNoCatalogo],
+  ].filter(l => l[1] !== undefined);
+
+  const porSub = Object.entries(r.porSubMarca || {});
+
+  return `<div class="aviso ok">
+      <b>Estoque atualizado.</b>
+      <table style="margin-top:10px">${linhas.map(l =>
+        `<tr><td style="border:0;padding:3px 0">${l[0]}</td>
+             <td style="border:0;padding:3px 0;text-align:right"><b>${l[1]}</b></td></tr>`).join('')}</table>
+      ${porSub.length ? `<div style="margin-top:10px;font-size:12px">
+        <b>Por sub-marca:</b> ${porSub.map(([k,v]) => `${esc(k)}: ${v}`).join(' · ')}</div>` : ''}
+    </div>
+    ${(d.avisos||[]).length ? `<div class="aviso"><b>${d.avisos.length} avisos:</b><br>
+      ${d.avisos.slice(0,10).map(esc).join('<br>')}</div>` : ''}`;
 }
 
 /**
@@ -664,11 +730,7 @@ async function abaClientes() {
   document.querySelectorAll('[data-editar]').forEach(b =>
     b.onclick = () => formCliente(clientes.find(c => c._id === b.dataset.editar)));
   document.querySelectorAll('[data-senha]').forEach(b =>
-    b.onclick = async () => {
-      const d = await api('/api/admin/usuarios/' + b.dataset.senha + '/senha', {
-        method:'POST', headers:{'content-type':'application/json'}, body:'{}' });
-      alert('Nova senha: ' + d.senha + '\n\nAnote agora, ela não aparece de novo.');
-    });
+    b.onclick = () => formSenha(clientes.find(c => c._id === b.dataset.senha)));
   document.querySelectorAll('[data-liberar]').forEach(b =>
     b.onclick = async () => {
       await api('/api/admin/usuarios/' + b.dataset.liberar, {
@@ -676,6 +738,66 @@ async function abaClientes() {
         body: JSON.stringify({ catalogoStatus: b.dataset.atual === 'live' ? 'travado' : 'live' }) });
       abaClientes();
     });
+}
+
+/**
+ * Trocar a senha de um cliente.
+ *
+ * Antes isso era um botão que sorteava uma senha e mostrava num alert. Agora
+ * dá para escolher a senha — que é o que acontece na prática quando o cliente
+ * liga pedindo para trocar e quer uma que ele consiga lembrar. O sorteio
+ * continua ali, num botão, para quando não houver preferência.
+ */
+function formSenha(c) {
+  if (!c) return;
+  $('janela').innerHTML = `
+    <h1>Nova senha</h1>
+    <p class="sub">${esc(c.nome)} · usuário <span class="senha">${esc(c.usuario)}</span></p>
+    <div class="campos">
+      <div class="campo cheio"><label>Senha nova (mínimo 6 caracteres)</label>
+        <input id="s-nova" autocomplete="off" placeholder="deixe em branco para sortear uma"></div>
+    </div>
+    <div class="solto" style="margin-top:8px">
+      <button class="acao" id="s-sortear">Sortear uma senha</button>
+    </div>
+    <div id="s-erro" class="aviso erro" style="display:none"></div>
+    <div class="solto" style="margin-top:12px;justify-content:flex-end">
+      <button class="acao" onclick="document.getElementById('tapa').classList.remove('aberto')">Cancelar</button>
+      <button class="primaria" id="s-salvar">Trocar a senha</button>
+    </div>`;
+  $('tapa').classList.add('aberto');
+
+  $('s-sortear').onclick = async () => {
+    const d = await api('/api/admin/senha-sugerida');
+    $('s-nova').value = d.senha;
+  };
+
+  $('s-salvar').onclick = async () => {
+    const senha = $('s-nova').value.trim();
+    if (senha && senha.length < 6) {
+      $('s-erro').textContent = 'A senha precisa de pelo menos 6 caracteres.';
+      $('s-erro').style.display = 'block';
+      return;
+    }
+    try {
+      const d = await api('/api/admin/usuarios/' + c._id + '/senha', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify(senha ? { senha } : {}) });
+      $('janela').innerHTML = `
+        <h1>Senha trocada</h1>
+        <p class="sub">Mande estes dados para o cliente. A senha não aparece de novo.</p>
+        <div class="painel">
+          <p>Endereço: <span class="senha">${location.origin}/login</span></p>
+          <p>Usuário: <span class="senha">${esc(c.usuario)}</span></p>
+          <p>Senha: <span class="senha">${esc(d.senha)}</span></p>
+        </div>
+        <div class="solto" style="justify-content:flex-end">
+          <button class="primaria" onclick="document.getElementById('tapa').classList.remove('aberto')">Pronto</button>
+        </div>`;
+    } catch (e) {
+      $('s-erro').textContent = e.message; $('s-erro').style.display = 'block';
+    }
+  };
 }
 
 function formCliente(c) {
