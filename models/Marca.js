@@ -78,6 +78,21 @@ const MarcaSchema = new mongoose.Schema(
     prazoMaximoDias: { type: Number, default: 60 },
     acrescimoNoTeto: { type: Number, default: 0.02 },
 
+    /**
+     * Item sem saldo continua aparecendo no catálogo, marcado como "sem
+     * estoque"?
+     *
+     * Na Maxprint fica `false`: lá, item sem saldo tem previsão de chegada e
+     * vira pedido programado; o que não tem saldo NEM previsão é descontinuado
+     * e some mesmo.
+     *
+     * Na Samsonite fica `true`: a Samsonite não informa previsão de chegada,
+     * então a regra da Maxprint apagaria do catálogo quase mil itens que
+     * existem e voltam a ter saldo. O cliente precisa ver que o produto
+     * existe, mesmo que hoje não dê para comprar.
+     */
+    mostrarSemEstoque: { type: Boolean, default: false },
+
     /** Sobrepõe Config.emailsAviso quando precisar avisar gente diferente por marca. Vazio = usa o global. */
     emailsAviso: { type: [String], default: [] },
   },
