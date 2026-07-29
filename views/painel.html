@@ -435,6 +435,26 @@ async function abaImportar() {
         </div>
       </div>
       <div id="resultado-sam-estoque"></div>
+
+      <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
+      <h2 style="font-size:14px">Buscar fotos nas lojas oficiais</h2>
+      <p class="d">Procura a foto de cada produto <b>sem imagem</b> nas lojas oficiais da Samsonite
+         e da American Tourister, casando pelo <b>código</b> — o mesmo SKU da planilha. A foto é
+         baixada e fica guardada aqui, então o catálogo não depende mais do PDF.
+         <br><b>${contaMarca('samsonite').semFoto} produtos sem foto hoje.</b></p>
+      <div class="solto">
+        <div class="campo"><label>O que buscar</label>
+          <select id="sam-fotos-escopo">
+            <option value="nao">Todos os produtos sem foto</option>
+            <option value="sim">Só os que têm saldo (mais rápido)</option>
+          </select></div>
+        <button class="primaria" id="b-sam-fotos">Buscar fotos</button>
+      </div>
+      <div class="aviso" style="margin-top:0">
+        A varredura visita as páginas <b>uma a uma, com pausa</b>, para não sobrecarregar as lojas —
+        por isso demora de 30 a 60 minutos. Pode fechar a tela: continua rodando no servidor.
+      </div>
+      <div id="resultado-sam-fotos"></div>
     </div>`}
 
     <div class="painel">
@@ -455,7 +475,76 @@ async function abaImportar() {
   ligarImport('catalogo');
   ligarImport('estoque');
   ligarImport('preco');
-  if (temSamsonite) { ligarImportSamsonite(); ligarEstoqueSamsonite(); }
+  if (temSamsonite) { ligarImportSamsonite(); ligarEstoqueSamsonite(); ligarBuscaDeFotos(); }
+}
+
+function ligarBuscaDeFotos() {
+  const botao = $('b-sam-fotos');
+  if (!botao) return;
+  botao.onclick = async () => {
+    botao.disabled = true;
+    $('resultado-sam-fotos').innerHTML = '<div class="aviso">Começando a varredura...</div>';
+    try {
+      const { tarefa } = await api('/api/importacao/samsonite/fotos', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ soComSaldo: $('sam-fotos-escopo').value }) });
+      acompanharFotos(tarefa);
+    } catch (e) {
+      $('resultado-sam-fotos').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      botao.disabled = false;
+    }
+  };
+}
+
+/** Mesma ideia do acompanhamento da importação: pergunta de tempos em tempos. */
+async function acompanharFotos(id) {
+  const alvo = $('resultado-sam-fotos');
+  if (!alvo) return;
+
+  let t;
+  try { t = await api('/api/importacao/samsonite/status/' + id); }
+  catch (e) { alvo.innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`; return; }
+
+  if (t.estado === 'rodando') {
+    alvo.innerHTML = `<div class="aviso">
+      <b>Buscando fotos...</b> ${esc(t.etapa)}
+      <div style="background:#E5E5E7;border-radius:20px;height:7px;margin-top:9px;overflow:hidden">
+        <div style="background:var(--laranja);height:100%;width:${t.progresso||0}%;transition:width .4s"></div>
+      </div>
+      <div style="font-size:11.5px;color:var(--cinza);margin-top:6px">
+        Pode sair desta tela; a busca continua no servidor.</div>
+    </div>`;
+    setTimeout(() => acompanharFotos(id), 5000);
+    return;
+  }
+
+  if (t.estado === 'erro') {
+    alvo.innerHTML = `<div class="aviso erro"><b>A busca falhou.</b><br>${esc(t.erro)}</div>`;
+    const b = $('b-sam-fotos'); if (b) b.disabled = false;
+    return;
+  }
+
+  const r = t.relatorio || {};
+  const linhas = [
+    ['Produtos sem foto ao começar', r.procurados],
+    ['Páginas de produto visitadas', r.paginasVisitadas],
+    ['Fotos encontradas pelo código', r.fotosEncontradas],
+    ['Fotos baixadas e guardadas', r.fotosBaixadas],
+    ['Falhas ao baixar', r.falhasAoBaixar],
+    ['Ainda sem foto', r.aindaSemFoto],
+  ].filter(l => l[1] !== undefined);
+
+  alvo.innerHTML = `<div class="aviso ok">
+      <b>Busca concluída.</b>
+      <table style="margin-top:10px">${linhas.map(l =>
+        `<tr><td style="border:0;padding:3px 0">${l[0]}</td>
+             <td style="border:0;padding:3px 0;text-align:right"><b>${l[1]}</b></td></tr>`).join('')}</table>
+      ${(r.lojas||[]).length ? `<div style="margin-top:8px;font-size:12px">Lojas consultadas: ${r.lojas.map(esc).join(' · ')}</div>` : ''}
+    </div>
+    ${(t.avisos||[]).length ? `<div class="aviso"><b>${t.avisos.length} avisos:</b><br>
+      ${t.avisos.slice(0,12).map(esc).join('<br>')}
+      ${t.avisos.length>12?`<br>e mais ${t.avisos.length-12}.`:''}</div>` : ''}`;
+  const b = $('b-sam-fotos'); if (b) b.disabled = false;
 }
 
 /** A planilha de estoque é rápida, então dispara ao escolher o arquivo. */
