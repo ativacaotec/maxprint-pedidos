@@ -593,6 +593,89 @@ router.post('/samsonite/estoque', upload.array('arquivos', 4), async (req, res) 
   }
 });
 
+/* ------------------------------------------------------------------ *
+ * Buscador de fotos nas lojas oficiais da Samsonite
+ *
+ * Roda em segundo plano e usa a MESMA lista de tarefas da importação, então
+ * o painel acompanha pelo mesmo /samsonite/status/:id.
+ * ------------------------------------------------------------------ */
+
+const { buscarFotosSamsonite } = require('../lib/buscarFotosSamsonite');
+
+async function rodarBuscaDeFotos(id, opcoes) {
+  const MARCA = 'samsonite';
+  try {
+    marcar(id, { etapa: 'vendo quem está sem foto', progresso: 2 });
+
+    // Só quem realmente precisa: foto do catálogo em PDF e foto anexada à mão
+    // pelo admin têm prioridade e não são tocadas.
+    const filtro = { marcaSlug: MARCA, ativo: true, imagem: '', imagemManual: '' };
+    if (opcoes.soComSaldo) filtro.estoque = { $gt: 0 };
+
+    const semFoto = await Produto.find(filtro).select('codigo codigoOriginal nome').lean();
+    if (!semFoto.length) {
+      marcar(id, { estado: 'pronto', etapa: 'nada a fazer', progresso: 100,
+        relatorio: { procurados: 0, fotosBaixadas: 0 }, avisos: ['Todos os produtos já têm foto.'] });
+      return;
+    }
+
+    const { resultados, relatorio, avisos } = await buscarFotosSamsonite(semFoto, {
+      pastaImagens: PASTA_IMAGENS,
+      prefixo: 'samweb',
+      pausaMs: opcoes.pausaMs,
+      aoAndar: (p) => {
+        // O progresso é estimado: não dá para saber quantas páginas a loja tem
+        // antes de ler o sitemap. Prefiro uma barra que anda a uma barra parada.
+        const prog = Math.min(92, 5 + Math.round((p.achados / Math.max(1, semFoto.length)) * 80));
+        marcar(id, { etapa: p.etapa, progresso: prog });
+      },
+    });
+
+    marcar(id, { etapa: 'gravando as fotos no catálogo', progresso: 95 });
+
+    const operacoes = resultados.map((r) => ({
+      updateOne: {
+        filter: { codigo: r.codigo, marcaSlug: MARCA },
+        update: { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } },
+      },
+    }));
+    if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
+
+    const relatorioFinal = {
+      ...relatorio,
+      aindaSemFoto: await Produto.countDocuments({ marcaSlug: MARCA, ativo: true, imagem: '', imagemManual: '' }),
+    };
+
+    await Importacao.create({
+      tipo: 'samsonite',
+      arquivos: ['(busca de fotos nas lojas oficiais)'],
+      usuario: opcoes.usuario,
+      duracaoSegundos: Math.round((Date.now() - opcoes.inicio) / 1000),
+      relatorio: relatorioFinal,
+      avisos,
+      erro: '',
+    });
+
+    marcar(id, { estado: 'pronto', etapa: 'concluído', progresso: 100, relatorio: relatorioFinal, avisos });
+  } catch (e) {
+    console.error('[busca fotos samsonite]', e);
+    marcar(id, { estado: 'erro', etapa: 'falhou', erro: e.message });
+  }
+}
+
+router.post('/samsonite/fotos', async (req, res) => {
+  const id = novaTarefa();
+  rodarBuscaDeFotos(id, {
+    usuario: req.session.usuario.usuario,
+    inicio: Date.now(),
+    soComSaldo: String(req.body.soComSaldo || 'nao') === 'sim',
+    // Intervalo entre páginas. Abaixo de 800ms começa a parecer ataque; o
+    // padrão do buscador (1200ms) é o que eu recomendo deixar.
+    pausaMs: Math.max(800, Number(req.body.pausaMs) || 1200),
+  });
+  res.json({ ok: true, tarefa: id });
+});
+
 router.get('/samsonite/status/:id', (req, res) => {
   const t = tarefas.get(req.params.id);
   if (!t) return res.status(404).json({ erro: 'Importação não encontrada (o servidor pode ter reiniciado).' });
