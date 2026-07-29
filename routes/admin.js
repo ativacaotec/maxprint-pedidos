@@ -8,6 +8,9 @@ const Usuario = require('../models/Usuario');
 const Pedido = require('../models/Pedido');
 const Produto = require('../models/Produto');
 const Config = require('../models/Config');
+const Marca = require('../models/Marca');
+const { enviarAvisoPedido, configurado } = require('../lib/email');
+const { carregarMarca, listarMarcasAtivas } = require('../lib/marcas');
 const { requireLogin, requireInterno, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -18,7 +21,13 @@ router.use(requireLogin, requireInterno);
  * ------------------------------------------------------------------ */
 
 const CAMPOS_PUBLICOS =
-  'nome usuario perfil ativo email razaoSocial cnpj endereco telefone vendedor transportadora desconto catalogoStatus verOutlet permitirProgramado ultimoAcesso createdAt';
+  'nome usuario perfil ativo email razaoSocial cnpj endereco telefone vendedor transportadora desconto catalogoStatus verOutlet permitirProgramado marcasPermitidas ultimoAcesso createdAt';
+
+/** Lista de slugs de marca válidos hoje, para não gravar lixo no cadastro do cliente. */
+function marcasValidas(lista) {
+  if (!Array.isArray(lista)) return undefined;
+  return [...new Set(lista.map((s) => String(s || '').toLowerCase().trim()).filter(Boolean))];
+}
 
 router.get('/usuarios', async (req, res) => {
   const filtro = {};
@@ -67,6 +76,7 @@ router.post('/usuarios', requireAdmin, async (req, res) => {
       catalogoStatus: b.catalogoStatus || 'travado',
       verOutlet: b.verOutlet !== false,
       permitirProgramado: b.permitirProgramado !== false,
+      marcasPermitidas: marcasValidas(b.marcasPermitidas) || ['maxprint'],
     });
 
     // A senha em claro volta UMA vez, para o admin repassar ao cliente.
@@ -86,6 +96,13 @@ router.patch('/usuarios/:id', requireAdmin, async (req, res) => {
   ];
   for (const c of permitidos) if (b[c] !== undefined) set[c] = b[c];
   if (b.desconto !== undefined) set.desconto = Math.min(Math.max(Number(b.desconto) || 0, 0), 0.95);
+  if (b.marcasPermitidas !== undefined) {
+    const validas = marcasValidas(b.marcasPermitidas);
+    // Lista vazia de propósito não vira "sem marca nenhuma" — cai no default
+    // ['maxprint'], porque um cliente sem nenhuma marca marcada fica sem
+    // conseguir ver catálogo nenhum, o que quase certamente não é a intenção.
+    set.marcasPermitidas = validas && validas.length ? validas : ['maxprint'];
+  }
 
   const u = await Usuario.findByIdAndUpdate(req.params.id, set, { new: true })
     .select(CAMPOS_PUBLICOS).lean();
@@ -121,6 +138,31 @@ router.put('/config', requireAdmin, async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ *
+ * Marcas: abas do sistema (Maxprint, Samsonite, e no futuro Yins)
+ * ------------------------------------------------------------------ */
+
+router.get('/marcas', async (req, res) => {
+  const lista = await Marca.find().sort({ ordem: 1, nome: 1 }).lean();
+  res.json(lista);
+});
+
+const CAMPOS_MARCA_EDITAVEIS = [
+  'nome', 'ativa', 'ordem', 'corPrimaria', 'corSecundaria', 'logoClara', 'logoEscura',
+  'pedidoMinimo', 'valorFreteCif', 'condicoesPagamento', 'condicoesAcimaDeValor',
+  'aplicarAcrescimoPrazo', 'prazoMaximoDias', 'acrescimoNoTeto', 'emailsAviso', 'subMarcas',
+];
+
+router.patch('/marcas/:slug', requireAdmin, async (req, res) => {
+  const b = req.body || {};
+  const set = {};
+  for (const c of CAMPOS_MARCA_EDITAVEIS) if (b[c] !== undefined) set[c] = b[c];
+
+  const m = await Marca.findOneAndUpdate({ slug: String(req.params.slug).toLowerCase() }, set, { new: true }).lean();
+  if (!m) return res.status(404).json({ erro: 'Marca não encontrada.' });
+  res.json(m);
+});
+
+/* ------------------------------------------------------------------ *
  * Painel: números da casa
  * ------------------------------------------------------------------ */
 
@@ -141,8 +183,11 @@ router.get('/resumo', async (req, res) => {
 
   const semFoto = await Produto.countDocuments({ ativo: true, imagem: '', imagemManual: '' });
   const semSaldo = await Produto.countDocuments({ ativo: true, estoque: 0 });
+  const naoAvisados = await Pedido.countDocuments({ avisoEnviado: false, status: 'novo' });
 
   res.json({
+    emailConfigurado: configurado(),
+    naoAvisados,
     pedidos: { novos, digitados, faturados },
     ultimos30: agregado || { total: 0, pedidos: 0, pecas: 0 },
     produtos,
@@ -150,6 +195,50 @@ router.get('/resumo', async (req, res) => {
     semFoto,
     semSaldo,
   });
+});
+
+/**
+ * Dispara um aviso de teste. Serve para descobrir na hora se a chave do
+ * serviço de e-mail está certa, em vez de só perceber quando um pedido de
+ * verdade chegar e ninguém for avisado.
+ */
+router.post('/testar-email', requireAdmin, async (req, res) => {
+  const c = await Config.carregar();
+  if (!configurado()) {
+    return res.status(400).json({
+      erro: 'A chave do serviço de e-mail não está configurada no servidor (EMAIL_API_KEY no arquivo .env).',
+    });
+  }
+  const falso = {
+    numero: 'TESTE',
+    razaoSocial: 'Envio de teste',
+    cnpj: '00.000.000/0001-00',
+    condicaoRotulo: '30 dias',
+    frete: 'CIF',
+    total: 3500,
+    totalProgramado: 0,
+    pecas: 120,
+    itens: [{ codigo: 'TESTE', codigoOriginal: 'TESTE', nome: 'Item de teste', quantidade: 120, total: 3500 }],
+  };
+  const r = await enviarAvisoPedido(falso, c.emailsAviso, (process.env.URL_PUBLICA || '') + '/painel');
+  if (!r.enviado) return res.status(502).json({ erro: `Não consegui enviar: ${r.motivo}` });
+  res.json({ ok: true, para: c.emailsAviso });
+});
+
+/**
+ * Reenvia o aviso de um pedido que ficou sem notificação (por exemplo, porque
+ * a chave de e-mail ainda não estava configurada quando ele chegou).
+ */
+router.post('/reenviar-aviso/:numero', requireAdmin, async (req, res) => {
+  const c = await Config.carregar();
+  const p = await Pedido.findOne({ numero: Number(req.params.numero) }).lean();
+  if (!p) return res.status(404).json({ erro: 'Pedido não encontrado.' });
+  const marca = await carregarMarca(p.marcaSlug || 'maxprint');
+  const emailsAviso = (marca && marca.emailsAviso && marca.emailsAviso.length) ? marca.emailsAviso : c.emailsAviso;
+  const r = await enviarAvisoPedido(p, emailsAviso, `${process.env.URL_PUBLICA || ''}/painel`, marca ? marca.nome : '');
+  if (!r.enviado) return res.status(502).json({ erro: `Não consegui enviar: ${r.motivo}` });
+  await Pedido.updateOne({ _id: p._id }, { avisoEnviado: true });
+  res.json({ ok: true });
 });
 
 /* ------------------------------------------------------------------ *
@@ -210,11 +299,16 @@ router.get('/relatorio/periodo', async (req, res) => {
 router.get('/produtos', async (req, res) => {
   const q = String(req.query.q || '').trim();
   const filtro = { ativo: true };
+  if (req.query.marca) filtro.marcaSlug = String(req.query.marca).toLowerCase();
   if (q) {
     filtro.$or = [
       { codigo: new RegExp(q.replace(/\D/g, ''), 'i') },
       { nome: new RegExp(q, 'i') },
       { descricaoEstoque: new RegExp(q, 'i') },
+      // A Samsonite se procura pela cor e pela linha com muito mais frequência
+      // do que por código — quem atende tem o nome da mala na cabeça, não o SKU.
+      { cor: new RegExp(q, 'i') },
+      { grupo: new RegExp(q, 'i') },
     ];
   }
   if (req.query.semFoto === 'sim') { filtro.imagem = ''; filtro.imagemManual = ''; }

@@ -6,7 +6,8 @@ const Produto = require('../models/Produto');
 const Usuario = require('../models/Usuario');
 const Config = require('../models/Config');
 const { requireLogin, requireInterno } = require('../middleware/auth');
-const { precoUnitario, fatorPrazo, interpretarCondicao } = require('../lib/prazo');
+const { precoUnitario, fatorPrazo, interpretarCondicao, condicoesDisponiveis, regrasDaMarca } = require('../lib/prazo');
+const { carregarMarca, podeAcessarMarca } = require('../lib/marcas');
 const { gerarExcel } = require('../lib/gerarExcel');
 const { gerarPdf } = require('../lib/gerarPdf');
 const { enviarAvisoPedido } = require('../lib/email');
@@ -24,11 +25,25 @@ async function montarPedido(sessao, corpo) {
   const ehCliente = sessao.perfil === 'cliente';
   const desconto = ehCliente ? (cliente?.desconto || 0) : Number(corpo.descontoManual || 0);
 
-  const cond = interpretarCondicao(corpo.condicao || '30');
-  const info = fatorPrazo(cond);
+  const marcaSlug = String(corpo.marca || 'maxprint').toLowerCase();
+  if (!podeAcessarMarca(sessao, marcaSlug)) {
+    const erro = new Error('Você não tem acesso a essa marca.');
+    erro.status = 403;
+    throw erro;
+  }
+  const marca = await carregarMarca(marcaSlug);
+  if (!marca || !marca.ativa) {
+    const erro = new Error('Marca não encontrada ou desativada.');
+    erro.status = 404;
+    throw erro;
+  }
+  const regras = regrasDaMarca(marca);
+
+  const cond = interpretarCondicao(corpo.condicao || '30', regras.condicoes);
+  const info = fatorPrazo(cond, regras);
   if (info.negociar) {
     const erro = new Error(
-      `Prazo médio de ${info.prazoMedio} dias passa do limite de 60. ` +
+      `Prazo médio de ${info.prazoMedio} dias passa do limite de ${regras.prazoMaximoDias}. ` +
       'Essa condição precisa ser negociada com o representante.'
     );
     erro.status = 422;
@@ -44,7 +59,7 @@ async function montarPedido(sessao, corpo) {
   }
 
   const codigos = linhas.map((l) => String(l.codigo));
-  const produtos = await Produto.find({ codigo: { $in: codigos } }).lean();
+  const produtos = await Produto.find({ codigo: { $in: codigos }, marcaSlug }).lean();
   const mapa = new Map(produtos.map((p) => [p.codigo, p]));
 
   const itens = [];
@@ -75,7 +90,7 @@ async function montarPedido(sessao, corpo) {
       continue;
     }
 
-    const calc = precoUnitario(p.precoBase, desconto, cond);
+    const calc = precoUnitario(p.precoBase, desconto, cond, regras);
     const total = Math.round((calc.preco * qtd + Number.EPSILON) * 100) / 100;
 
     itens.push({
@@ -103,13 +118,37 @@ async function montarPedido(sessao, corpo) {
   totalProgramado = arred(totalProgramado);
   const total = arred(totalPronta + totalProgramado);
 
+  // Condição escolhida precisa estar realmente liberada para este total —
+  // a Samsonite só libera 60/90, 90 e 60/90/120 acima de R$ 15.000, e essa
+  // checagem tem que valer no servidor, não só esconder o botão na tela.
+  const permitidas = condicoesDisponiveis(regras, total);
+  if (!permitidas.some((c) => c.id === cond.id)) {
+    const erro = new Error(
+      `A condição "${cond.rotulo}" só fica disponível a partir de ${
+        (regras.condicoesAcimaDeValor?.valorMinimo || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+      } em pedido. Escolha outra condição ou aumente o pedido.`
+    );
+    erro.status = 422;
+    throw erro;
+  }
+
+  const valorFreteCif = marca.valorFreteCif !== null && marca.valorFreteCif !== undefined ? marca.valorFreteCif : config.valorFreteCif;
+  const pedidoMinimo = marca.pedidoMinimo !== null && marca.pedidoMinimo !== undefined ? marca.pedidoMinimo : config.pedidoMinimo;
+
   const cab = corpo.cabecalho || {};
-  const frete = total >= config.valorFreteCif ? 'CIF' : (cab.frete || 'FOB');
+  const frete = total >= valorFreteCif ? 'CIF' : (cab.frete || 'FOB');
+
+  // pedidoMinimo/valorFreteCif aqui já são os efetivos (marca, com Config
+  // como plano B) — routes/previa e / continuam lendo `config.pedidoMinimo`
+  // e `config.valorFreteCif` sem saber que existe uma marca por trás.
+  const configEfetivo = { ...config.toObject(), pedidoMinimo, valorFreteCif };
 
   return {
-    config,
+    config: configEfetivo,
+    marca,
     recusados,
     dados: {
+      marcaSlug,
       clienteId: sessao.id,
       clienteUsuario: sessao.usuario,
       razaoSocial: cab.razaoSocial || cliente?.razaoSocial || '',
@@ -162,7 +201,7 @@ router.post('/previa', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { dados, config, recusados } = await montarPedido(req.session.usuario, req.body);
+    const { dados, config, marca, recusados } = await montarPedido(req.session.usuario, req.body);
 
     if (recusados.length) {
       return res.status(422).json({
@@ -192,8 +231,11 @@ router.post('/', async (req, res) => {
     const pedido = await Pedido.create(dados);
 
     // O aviso por e-mail é acessório: se falhar, o pedido continua gravado.
+    // E-mails: usa a lista própria da marca quando ela tiver uma cadastrada,
+    // senão cai na lista global de Config (mesmo comportamento de antes).
+    const emailsAviso = (marca.emailsAviso && marca.emailsAviso.length) ? marca.emailsAviso : config.emailsAviso;
     const url = `${process.env.URL_PUBLICA || ''}/painel#pedido-${pedido.numero}`;
-    enviarAvisoPedido(pedido.toObject(), config.emailsAviso, url)
+    enviarAvisoPedido(pedido.toObject(), emailsAviso, url, marca.nome)
       .then((r) => {
         if (r.enviado) return Pedido.updateOne({ _id: pedido._id }, { avisoEnviado: true });
         console.warn('[aviso] não enviado:', r.motivo);

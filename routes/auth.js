@@ -30,6 +30,7 @@ router.post('/login', async (req, res) => {
     usuario: u.usuario,
     perfil: u.perfil,
     catalogoStatus: u.catalogoStatus,
+    marcasPermitidas: Array.isArray(u.marcasPermitidas) && u.marcasPermitidas.length ? u.marcasPermitidas : ['maxprint'],
   };
 
   return res.json({

@@ -47,15 +47,21 @@ async function recruzar() {
     fichasPorModelo: modelos?.itens || [],
   });
 
+  // Tudo aqui é da MAXPRINT. Depois que o sistema virou multimarca, cada
+  // consulta e cada escrita deste recruzamento precisa dizer isso: sem o
+  // filtro por marca, o `updateMany` do fim desativaria o catálogo inteiro
+  // da Samsonite toda vez que a Maxprint fosse reimportada.
+  const MARCA = 'maxprint';
+
   // As imagens que o admin subiu à mão sobrevivem ao recruzamento.
-  const manuais = await Produto.find({ imagemManual: { $ne: '' } })
+  const manuais = await Produto.find({ marcaSlug: MARCA, imagemManual: { $ne: '' } })
     .select('codigo imagemManual').lean();
   const mapaManual = new Map(manuais.map((m) => [m.codigo, m.imagemManual]));
 
   const operacoes = produtos.map((p) => ({
     updateOne: {
-      filter: { codigo: p.codigo },
-      update: { $set: { ...p, imagemManual: mapaManual.get(p.codigo) || '', ativo: true } },
+      filter: { codigo: p.codigo, marcaSlug: MARCA },
+      update: { $set: { ...p, marcaSlug: MARCA, imagemManual: mapaManual.get(p.codigo) || '', ativo: true } },
       upsert: true,
     },
   }));
@@ -64,9 +70,9 @@ async function recruzar() {
 
   // Some do catálogo o que saiu das planilhas, sem apagar o histórico.
   const vivos = produtos.map((p) => p.codigo);
-  await Produto.updateMany({ codigo: { $nin: vivos } }, { $set: { ativo: false } });
+  await Produto.updateMany({ marcaSlug: MARCA, codigo: { $nin: vivos } }, { $set: { ativo: false } });
 
-  relatorio.desativados = await Produto.countDocuments({ ativo: false });
+  relatorio.desativados = await Produto.countDocuments({ marcaSlug: MARCA, ativo: false });
   return relatorio;
 }
 
@@ -276,13 +282,170 @@ const uploadImagem = multer({
 
 router.post('/foto/:codigo', uploadImagem.single('imagem'), async (req, res) => {
   if (!req.file) return res.status(400).json({ erro: 'Escolha uma imagem.' });
+  // A marca vem por query (?marca=samsonite) porque o mesmo código pode, em
+  // tese, existir em duas marcas — o índice do Produto é (marcaSlug, codigo).
+  const marcaSlug = String(req.query.marca || 'maxprint').toLowerCase();
   const p = await Produto.findOneAndUpdate(
-    { codigo: req.params.codigo },
+    { codigo: req.params.codigo, marcaSlug },
     { imagemManual: req.file.filename },
     { new: true }
   ).lean();
   if (!p) return res.status(404).json({ erro: 'Produto não encontrado.' });
   res.json({ ok: true, imagem: req.file.filename });
+});
+
+/* ------------------------------------------------------------------ *
+ * Importação da Samsonite
+ *
+ * Diferente da Maxprint, aqui a base inteira (preço, saldo e descrição) vem
+ * de UM arquivo só, o HTML da aplicação antiga. Os PDFs são opcionais e
+ * servem só para trazer a foto de cada cor.
+ *
+ * Roda em SEGUNDO PLANO, com consulta de andamento à parte. Motivo: extrair
+ * as fotos dos dois catálogos leva alguns minutos, e o Nginx corta conexão
+ * ociosa bem antes disso — uma requisição só, esperando o fim, morreria no
+ * meio do caminho e deixaria o Marcelo sem saber se importou ou não.
+ * ------------------------------------------------------------------ */
+
+const { importarSamsonite } = require('../lib/importSamsonite');
+const { importarCatalogoSamsonite } = require('../lib/importCatalogoSamsonite');
+const { cruzarComFotos } = require('../lib/cruzamentoSamsonite');
+
+// Um processo pm2, uma execução por vez: um Map em memória basta. Se o
+// processo reiniciar no meio, o job some — e é o certo, porque o resultado
+// parcial não vale nada; o Marcelo simplesmente importa de novo.
+const tarefas = new Map();
+
+function novaTarefa() {
+  const id = `imp-${Date.now().toString(36)}`;
+  tarefas.set(id, { id, estado: 'rodando', etapa: 'começando', progresso: 0, relatorio: null, avisos: [], erro: '' });
+  // Não deixo lixo acumulando na memória para sempre.
+  if (tarefas.size > 20) tarefas.delete([...tarefas.keys()][0]);
+  return id;
+}
+
+function marcar(id, campos) {
+  const t = tarefas.get(id);
+  if (t) Object.assign(t, campos);
+}
+
+async function rodarImportacaoSamsonite(id, arquivos, opcoes) {
+  const MARCA = 'samsonite';
+  try {
+    const base = arquivos.base;
+    marcar(id, { etapa: 'lendo a base da Samsonite', progresso: 5 });
+
+    const { produtos, relatorio: relBase, avisos } = await importarSamsonite(base.path, {
+      pastaImagens: PASTA_IMAGENS,
+      prefixo: `sam${Date.now().toString(36)}`,
+    });
+
+    // Fotos por cor: cada PDF é uma passada demorada, então informo o
+    // andamento a cada arquivo em vez de deixar a tela parada.
+    const catalogos = [];
+    const pdfs = arquivos.pdfs || [];
+    for (const [i, f] of pdfs.entries()) {
+      marcar(id, {
+        etapa: `lendo fotos do catálogo ${i + 1} de ${pdfs.length} (${f.originalname})`,
+        progresso: 10 + Math.round((70 * i) / Math.max(1, pdfs.length)),
+      });
+      const r = await importarCatalogoSamsonite(f.path, {
+        pastaImagens: PASTA_IMAGENS,
+        prefixo: `sam${Date.now().toString(36)}${i}`,
+      });
+      catalogos.push(r);
+      avisos.push(...(r.avisos || []).map((a) => `${f.originalname}: ${a}`));
+    }
+
+    let relCruz = null;
+    if (catalogos.length) {
+      marcar(id, { etapa: 'casando as fotos com os produtos', progresso: 82 });
+      const cruz = cruzarComFotos(produtos, catalogos);
+      relCruz = cruz.relatorio;
+      avisos.push(...cruz.avisos);
+    }
+
+    marcar(id, { etapa: 'gravando no banco', progresso: 90 });
+
+    // Foto que o admin subiu à mão sobrevive à reimportação, igual à Maxprint.
+    const manuais = await Produto.find({ marcaSlug: MARCA, imagemManual: { $ne: '' } })
+      .select('codigo imagemManual').lean();
+    const mapaManual = new Map(manuais.map((m) => [m.codigo, m.imagemManual]));
+
+    const operacoes = produtos.map((p) => ({
+      updateOne: {
+        filter: { codigo: p.codigo, marcaSlug: MARCA },
+        update: { $set: { ...p, marcaSlug: MARCA, imagemManual: mapaManual.get(p.codigo) || '', ativo: true } },
+        upsert: true,
+      },
+    }));
+    if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
+
+    // Só desativa o que é da Samsonite — a Maxprint não pode ser tocada aqui.
+    const vivos = produtos.map((p) => p.codigo);
+    await Produto.updateMany({ marcaSlug: MARCA, codigo: { $nin: vivos } }, { $set: { ativo: false } });
+
+    const relatorio = {
+      ...relBase,
+      cruzamentoFotos: relCruz,
+      desativados: await Produto.countDocuments({ marcaSlug: MARCA, ativo: false }),
+    };
+
+    await Importacao.create({
+      tipo: 'samsonite',
+      arquivos: [base.originalname, ...pdfs.map((f) => f.originalname)],
+      usuario: opcoes.usuario,
+      duracaoSegundos: Math.round((Date.now() - opcoes.inicio) / 1000),
+      relatorio,
+      avisos,
+      erro: '',
+    });
+
+    marcar(id, { estado: 'pronto', etapa: 'concluído', progresso: 100, relatorio, avisos });
+  } catch (e) {
+    console.error('[import samsonite]', e);
+    marcar(id, { estado: 'erro', etapa: 'falhou', erro: e.message });
+    await Importacao.create({
+      tipo: 'samsonite',
+      arquivos: [],
+      usuario: opcoes.usuario,
+      duracaoSegundos: Math.round((Date.now() - opcoes.inicio) / 1000),
+      relatorio: {},
+      avisos: [],
+      erro: e.message,
+    }).catch(() => { /* o log já saiu no console */ });
+  } finally {
+    limpar([arquivos.base, ...(arquivos.pdfs || [])].filter(Boolean));
+  }
+}
+
+router.post(
+  '/samsonite',
+  upload.fields([{ name: 'base', maxCount: 1 }, { name: 'pdfs', maxCount: 8 }]),
+  async (req, res) => {
+    const base = (req.files && req.files.base && req.files.base[0]) || null;
+    const pdfs = (req.files && req.files.pdfs) || [];
+
+    if (!base) {
+      limpar(pdfs);
+      return res.status(400).json({ erro: 'Escolha o arquivo HTML da base da Samsonite.' });
+    }
+
+    const id = novaTarefa();
+    // Dispara e responde na hora: quem acompanha é o /samsonite/status/:id.
+    rodarImportacaoSamsonite(id, { base, pdfs }, {
+      usuario: req.session.usuario.usuario,
+      inicio: Date.now(),
+    });
+
+    res.json({ ok: true, tarefa: id });
+  }
+);
+
+router.get('/samsonite/status/:id', (req, res) => {
+  const t = tarefas.get(req.params.id);
+  if (!t) return res.status(404).json({ erro: 'Importação não encontrada (o servidor pode ter reiniciado).' });
+  res.json(t);
 });
 
 /* ------------------------------------------------------------------ *
@@ -300,15 +463,36 @@ router.get('/situacao', async (req, res) => {
   for (const b of await Base.find().select('tipo itens').lean()) {
     contagem[b.tipo] = (b.itens || []).length;
   }
+  // Por marca, para o painel conseguir mostrar cada aba separada.
+  const porMarca = await Produto.aggregate([
+    { $match: { ativo: true } },
+    {
+      $group: {
+        _id: '$marcaSlug',
+        produtos: { $sum: 1 },
+        semFoto: { $sum: { $cond: [{ $and: [{ $eq: ['$imagem', ''] }, { $eq: ['$imagemManual', ''] }] }, 1, 0] } },
+      },
+    },
+  ]);
+
   const produtos = await Produto.countDocuments({ ativo: true });
   const semFoto = await Produto.countDocuments({ ativo: true, imagem: '', imagemManual: '' });
-  res.json({ bases, contagem, produtos, semFoto });
+  res.json({
+    bases,
+    contagem,
+    produtos,
+    semFoto,
+    porMarca: porMarca.map((m) => ({ marca: m._id || 'maxprint', produtos: m.produtos, semFoto: m.semFoto })),
+  });
 });
 
 /** Lista os produtos sem foto, para o admin resolver os que importam. */
 router.get('/sem-foto', async (req, res) => {
-  const lista = await Produto.find({ ativo: true, imagem: '', imagemManual: '' })
-    .select('codigo codigoOriginal nome categoria linhaProduto estoque')
+  const filtro = { ativo: true, imagem: '', imagemManual: '' };
+  if (req.query.marca) filtro.marcaSlug = String(req.query.marca).toLowerCase();
+
+  const lista = await Produto.find(filtro)
+    .select('codigo codigoOriginal nome categoria linhaProduto estoque marcaSlug subMarca cor')
     .sort({ estoque: -1 })
     .limit(500)
     .lean();
