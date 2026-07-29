@@ -53,6 +53,14 @@ const UsuarioSchema = new mongoose.Schema(
     /** Deixa o cliente reservar item sem saldo, contra a previsão de chegada. */
     permitirProgramado: { type: Boolean, default: true },
 
+    /**
+     * Quais marcas (abas) esse cliente enxerga no catálogo. Escolhido pelo
+     * admin no cadastro do cliente. Default `['maxprint']` de propósito: todo
+     * cliente que já existia antes do sistema virar multimarca continua
+     * vendo exatamente o que via antes, sem precisar de migração de dados.
+     */
+    marcasPermitidas: { type: [String], default: ['maxprint'] },
+
     ultimoAcesso: { type: Date, default: null },
   },
   { timestamps: true }

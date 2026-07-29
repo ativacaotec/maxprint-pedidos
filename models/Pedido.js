@@ -39,6 +39,14 @@ const PedidoSchema = new mongoose.Schema(
   {
     numero: { type: Number, unique: true, index: true },
 
+    /**
+     * Marca a que esse pedido pertence ('maxprint', 'samsonite'...). A
+     * numeração continua uma sequência só, compartilhada entre marcas — é
+     * mais simples para o Marcelo acompanhar um único fluxo de números, e
+     * nada no pedido depende de a numeração ser por marca.
+     */
+    marcaSlug: { type: String, default: 'maxprint', index: true },
+
     clienteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', index: true },
     clienteUsuario: { type: String, default: '' },
 

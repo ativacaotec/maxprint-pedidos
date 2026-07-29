@@ -11,7 +11,10 @@ const mongoose = require('mongoose');
  */
 const ImportacaoSchema = new mongoose.Schema(
   {
-    tipo: { type: String, enum: ['catalogo', 'estoque', 'preco'], required: true, index: true },
+    // 'samsonite' cobre a importação inteira daquela marca (base + fotos),
+    // porque lá tudo vem junto num arquivo só — não há as três bases
+    // separadas que a Maxprint tem.
+    tipo: { type: String, enum: ['catalogo', 'estoque', 'preco', 'samsonite'], required: true, index: true },
     arquivos: { type: Array, default: [] },
     usuario: { type: String, default: '' },
     duracaoSegundos: { type: Number, default: 0 },
