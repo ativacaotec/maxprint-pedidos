@@ -6,10 +6,14 @@
 <title>Catálogo Maxprint · Ativação</title>
 <style>
 :root{
+  /* --laranja é a cor de destaque EM USO. Ela começa no laranja da Ativação
+     e passa a valer a cor da marca da aba aberta (ver aplicarTemaDaMarca).
+     Assim a tela inteira muda de cor sem precisar reescrever cada regra. */
   --laranja:#EB8704; --laranja-claro:#FFF3E3;
+  --ativacao:#EB8704;   /* a cor da casa, que nunca muda */
   --preto:#0B0B0C; --cinza:#8D8E8E; --cinza-borda:#E5E5E7; --claro:#F4F4F5;
   --verde:#0E9F6E; --vermelho:#D92D20; --azul:#1D4ED8;
-  --topo:60px; --carrinho:340px;
+  --topo:60px; --abas:0px; --carrinho:340px;
 }
 *{ box-sizing:border-box; }
 body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
@@ -37,11 +41,21 @@ header .espaco{ flex:1; }
 .btn-carrinho .badge{ background:#fff; color:var(--laranja); border-radius:20px;
                       padding:1px 7px; margin-left:6px; font-size:12px; }
 
+/* --------------------------- abas de marca ------------------------ */
+.abas-marca{ position:fixed; top:var(--topo); left:0; right:0; z-index:59; background:#fff;
+             border-bottom:1px solid var(--cinza-borda); display:flex; gap:2px;
+             padding:0 16px; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.abas-marca button{ background:none; border:0; padding:12px 16px; font-size:14px; cursor:pointer;
+                    color:#555; white-space:nowrap; border-bottom:3px solid transparent;
+                    display:flex; align-items:center; gap:8px; }
+.abas-marca button .bola{ width:9px; height:9px; border-radius:50%; flex:none; }
+.abas-marca button.ativa{ color:var(--preto); font-weight:700; }
+
 /* ------------------------------ corpo ----------------------------- */
-.corpo{ display:flex; padding-top:var(--topo); min-height:100vh; }
+.corpo{ display:flex; padding-top:calc(var(--topo) + var(--abas)); min-height:100vh; }
 nav{ width:224px; flex-shrink:0; background:#fff; border-right:1px solid var(--cinza-borda);
-     padding:14px 0 40px; position:sticky; top:var(--topo); height:calc(100vh - var(--topo));
-     overflow-y:auto; }
+     padding:14px 0 40px; position:sticky; top:calc(var(--topo) + var(--abas));
+     height:calc(100vh - var(--topo) - var(--abas)); overflow-y:auto; }
 nav h3{ font-size:10px; text-transform:uppercase; letter-spacing:.7px; color:var(--cinza);
         margin:14px 16px 7px; }
 nav a{ display:flex; justify-content:space-between; align-items:center; gap:6px;
@@ -52,7 +66,7 @@ nav a.ativo{ background:var(--laranja-claro); border-left-color:var(--laranja);
              color:var(--preto); font-weight:600; }
 nav a span.n{ font-size:11px; color:var(--cinza); }
 
-main{ flex:1; padding:18px 20px 120px; min-width:0; }
+main{ flex:1; padding:18px 20px 150px; min-width:0; }
 .painel-titulo{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
 .painel-titulo h1{ font-size:20px; margin:0; letter-spacing:-.3px; }
 .painel-titulo .conta{ color:var(--cinza); font-size:13px; }
@@ -134,8 +148,32 @@ main{ flex:1; padding:18px 20px 120px; min-width:0; }
 .lista .selos{ position:static; margin-bottom:3px; }
 .lista .grade{ grid-template-columns:1fr; gap:7px; }
 
+/* ------------------- janela de cores do produto -------------------- */
+/* O Marcelo pediu: "quando apertar no card apareça todas as cores
+   disponíveis com suas informações correspondentes". Em vez de trocar a
+   foto e esconder o resto, esta janela mostra TODAS as cores lado a lado,
+   cada uma com foto, código, preço, saldo e campo de quantidade próprio —
+   dá para montar o pedido inteiro da linha sem fechar. */
+.cores-lista{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:12px; }
+.cor-item{ border:1.5px solid var(--cinza-borda); border-radius:11px; padding:11px; background:#fff; }
+.cor-item.tem{ border-color:var(--laranja); box-shadow:0 0 0 1px var(--laranja) inset; }
+.cor-item .foto{ height:120px; display:flex; align-items:center; justify-content:center; margin-bottom:8px; }
+.cor-item .foto img{ max-width:100%; max-height:120px; object-fit:contain; }
+.cor-item .foto .vazio{ width:100%; height:100%; background:var(--claro); border-radius:8px;
+                        display:flex; align-items:center; justify-content:center;
+                        color:#C4C4C6; font-size:11px; }
+.cor-item .nome-cor{ font-size:13px; font-weight:700; margin-bottom:2px; }
+.cor-item .cod{ font-size:10.5px; color:var(--cinza); margin-bottom:6px; }
+.cor-item .preco{ font-size:16px; font-weight:800; }
+.cor-item .estoque{ margin-bottom:8px; }
+.selo-promo{ background:var(--vermelho); color:#fff; font-size:9.5px; font-weight:700;
+             padding:2px 6px; border-radius:20px; margin-left:5px; }
+.preco-cheio{ font-size:11.5px; color:var(--cinza); text-decoration:line-through; margin-left:6px; }
+.card .toque{ position:absolute; inset:0; cursor:pointer; z-index:1; border-radius:12px; }
+.ver-cores{ font-size:11px; color:var(--laranja); font-weight:700; margin-top:5px; cursor:pointer; }
+
 /* ---------------------------- carrinho ---------------------------- */
-.carrinho{ position:fixed; top:var(--topo); right:0; bottom:0; width:var(--carrinho);
+.carrinho{ position:fixed; top:var(--topo); right:0; bottom:64px; width:var(--carrinho);
            background:#fff; border-left:1px solid var(--cinza-borda); display:flex;
            flex-direction:column; transform:translateX(100%); transition:transform .22s;
            z-index:55; }
@@ -170,6 +208,34 @@ main{ flex:1; padding:18px 20px 120px; min-width:0; }
 .btn.principal:disabled{ background:#E5E5E7; color:#A0A0A3; cursor:default; }
 .btn.secundario{ background:#fff; color:var(--preto); border:1px solid var(--cinza-borda); }
 
+/* ------------------------- barra inferior ------------------------- */
+/* O carrinho lateral fica escondido até o cliente abrir. Sem um resumo
+   sempre visível, ele digita quantidade sem saber quanto já somou. Esta
+   barra resolve isso: mostra itens, peças e total o tempo todo. */
+.barra-inferior{ position:fixed; left:0; right:0; bottom:0; z-index:58;
+  background:var(--preto); color:#fff; display:flex; align-items:center; gap:16px;
+  padding:10px 16px; transform:translateY(110%); transition:transform .2s;
+  box-shadow:0 -6px 24px rgba(0,0,0,.28); }
+.barra-inferior.on{ transform:none; }
+.barra-inferior .conta-b{ font-size:12.5px; color:#B9B9BC; white-space:nowrap; }
+.barra-inferior .total-b{ font-size:20px; font-weight:800; letter-spacing:-.4px; }
+.barra-inferior .meio-b{ flex:1; min-width:80px; max-width:420px; }
+.barra-inferior .trilho{ height:6px; background:#2C2C2F; border-radius:20px; overflow:hidden; }
+.barra-inferior .trilho i{ display:block; height:100%; background:var(--laranja); width:0; transition:width .25s; }
+.barra-inferior .falta-b{ font-size:11.5px; color:#B9B9BC; margin-top:4px; }
+.barra-inferior .cif-b{ background:var(--laranja); color:#fff; border-radius:6px;
+  padding:5px 10px; font-size:11.5px; font-weight:800; letter-spacing:.3px; display:none; }
+.barra-inferior .cif-b.on{ display:block; }
+.barra-inferior button{ border:0; border-radius:8px; padding:10px 15px; font-size:13.5px;
+  font-weight:700; cursor:pointer; white-space:nowrap; }
+.barra-inferior .ver{ background:#1B1B1E; color:#fff; border:1px solid #2C2C2F; }
+.barra-inferior .fechar-pedido{ background:var(--laranja); color:#fff; }
+.barra-inferior .fechar-pedido:disabled{ background:#3A3A3D; color:#8D8E8E; cursor:default; }
+@media (max-width:760px){
+  .barra-inferior .meio-b{ display:none; }
+  .barra-inferior .conta-b{ display:none; }
+}
+
 /* ---------------------------- fechamento -------------------------- */
 .tapa{ position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:70; display:none;
        align-items:flex-start; justify-content:center; padding:26px 14px; overflow-y:auto; }
@@ -192,15 +258,85 @@ main{ flex:1; padding:18px 20px 120px; min-width:0; }
   .campos{ grid-template-columns:1fr; }
   .carrinho{ width:100%; }
 }
+
+/* ============================== celular ============================= */
+/* O Marcelo pediu que desse para usar no celular. As decisões aqui:
+   - a busca é o que mais se usa, então ela fica e ganha a largura toda;
+   - "Lista" e "Meus pedidos" saem do topo e viram um menu, para sobrar
+     espaço; o carrinho continua sempre à mão;
+   - o filtro por categoria, que no desktop é a coluna da esquerda, vira um
+     seletor no alto do conteúdo — sem ele não dá para navegar no celular. */
+.filtro-celular{ display:none; }
+
+@media (max-width:760px){
+  :root{ --topo:52px; }
+  /* No celular o cabeçalho SAI do fixo e volta para o fluxo normal.
+     Duas razões: ele quebra em duas linhas (busca embaixo) e passaria dos
+     90px comendo a tela toda; e, sendo fixo, ele cobria as abas de marca,
+     que ficavam invisíveis. Quem continua sempre à mão é a barra inferior,
+     que já tem o carrinho e o total. */
+  header{ position:static; padding:7px 10px; gap:9px; flex-wrap:wrap; height:auto; }
+  header .marcas img{ height:17px; }
+  header .marcas .barra{ height:16px; }
+  .busca{ order:5; flex:1 0 100%; max-width:none; }
+  .busca input{ font-size:16px; } /* 16px evita o zoom automático do iPhone */
+  .busca svg{ top:11px; }
+  header .espaco{ display:none; }
+  .btn-topo{ padding:7px 10px; font-size:12.5px; }
+  #btn-lista, #btn-meus{ display:none; }
+
+  /* As abas grudam no alto ao rolar: é por elas que se troca de marca. */
+  .abas-marca{ position:sticky; top:0; }
+  .abas-marca button{ padding:11px 13px; font-size:13.5px; }
+  .corpo{ padding-top:0; }
+
+  main{ padding:14px 12px 150px; }
+  .painel-titulo{ gap:8px; margin-bottom:12px; }
+  .painel-titulo h1{ font-size:17px; }
+  .ferramentas{ margin-left:0; width:100%; }
+  .filtro-celular{ display:block; width:100%; }
+  .filtro-celular select{ width:100%; padding:10px 11px; border-radius:9px;
+                          border:1.5px solid var(--cinza-borda); font-size:15px; background:#fff; }
+
+  /* Dois cards por linha ainda cabem e evitam rolagem sem fim. */
+  .grade{ grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .card{ padding:9px; }
+  .card .foto{ height:96px; }
+  .card .foto img{ max-height:96px; }
+  .card .nome{ font-size:12px; min-height:31px; }
+  .preco{ font-size:15.5px; }
+  .qtd input{ font-size:16px; padding:9px 4px; }
+  .qtd button{ width:36px; }
+
+  /* No celular a lista compacta vira card normal: em 390px de largura ela
+     espremeria foto, nome, preço e quantidade na mesma linha. */
+  .lista .card{ flex-direction:column; align-items:stretch; }
+  .lista .card .direita{ flex-direction:column; align-items:stretch; gap:6px; }
+  .lista .card .qtd{ width:100%; }
+
+  .cores-lista{ grid-template-columns:1fr 1fr; gap:9px; }
+  .cor-item .foto{ height:96px; }
+  .cor-item .foto img{ max-height:96px; }
+
+  .carrinho{ top:0; bottom:0; z-index:75; }
+  .janela{ padding:18px 15px; }
+  .tapa{ padding:12px 8px; }
+  .acoes{ flex-wrap:wrap; }
+  .acoes .btn{ flex:1 0 46%; }
+
+  .barra-inferior{ padding:9px 11px; gap:10px; }
+  .barra-inferior .total-b{ font-size:17px; }
+  .barra-inferior button{ padding:9px 12px; font-size:13px; }
+}
 </style>
 </head>
 <body>
 
 <header>
   <div class="marcas">
-    <img src="/logos/ativacao.png" alt="Ativação">
+    <img src="/logos/ativacao-branca.png" alt="Ativação">
     <div class="barra"></div>
-    <img class="mx" src="/logos/maxprint.png" alt="Maxprint">
+    <img class="mx" id="logo-marca" src="/logos/maxprint.png" alt="">
   </div>
   <div class="busca">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
@@ -216,6 +352,10 @@ main{ flex:1; padding:18px 20px 120px; min-width:0; }
   </button>
 </header>
 
+<!-- Abas de marca. Só aparecem quando o cliente tem mais de uma marca
+     liberada; com uma só, a barra some e a tela fica igual à de antes. -->
+<div class="abas-marca" id="abas-marca" style="display:none"></div>
+
 <div class="corpo">
   <nav id="menu"></nav>
   <main>
@@ -230,6 +370,9 @@ main{ flex:1; padding:18px 20px 120px; min-width:0; }
         <span class="chip" id="chip-acrescimo" style="display:none"></span>
         <span class="chip" id="chip-disponivel">Só com saldo</span>
       </div>
+      <!-- No celular a coluna da esquerda some; sem este seletor não haveria
+           como filtrar por categoria. -->
+      <div class="filtro-celular"><select id="filtro-celular"></select></div>
     </div>
 
     <div class="destaque" id="destaque" style="display:none">
@@ -266,6 +409,20 @@ main{ flex:1; padding:18px 20px 120px; min-width:0; }
   </div>
 </aside>
 
+<div class="barra-inferior" id="barra-inferior">
+  <div>
+    <div class="total-b" id="b-total">R$ 0,00</div>
+    <div class="conta-b" id="b-conta">0 itens · 0 peças</div>
+  </div>
+  <div class="meio-b">
+    <div class="trilho"><i id="b-barra"></i></div>
+    <div class="falta-b" id="b-falta"></div>
+  </div>
+  <div class="cif-b" id="b-cif">FRETE CIF</div>
+  <button class="ver" id="b-ver">Ver carrinho</button>
+  <button class="fechar-pedido" id="b-fechar" disabled>Fechar pedido</button>
+</div>
+
 <div class="tapa" id="tapa">
   <div class="janela" id="janela"></div>
 </div>
@@ -275,9 +432,11 @@ main{ flex:1; padding:18px 20px 120px; min-width:0; }
    Estado
    ================================================================== */
 const S = {
+  marcas: [],            // as abas que este cliente enxerga
+  marca: null,           // slug da marca aberta
   dados: null,
   cards: [],
-  carrinho: {},          // codigo -> quantidade
+  carrinho: {},          // codigo -> quantidade (SÓ da marca aberta)
   corEscolhida: {},      // chave do card -> codigo da cor
   categoria: null,
   linha: null,
@@ -292,16 +451,114 @@ const $ = (id) => document.getElementById(id);
 const dinheiro = (v) => Number(v || 0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
 const escapar = (s) => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+/** Clareia uma cor #rrggbb até virar fundo de destaque (o "laranja-claro" da marca). */
+function corClara(hex, forca = 0.9) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex||''));
+  if (!m) return '#FFF3E3';
+  const n = parseInt(m[1], 16);
+  const misturar = (c) => Math.round(c + (255 - c) * forca);
+  return '#' + [(n>>16)&255, (n>>8)&255, n&255].map(c =>
+    misturar(c).toString(16).padStart(2,'0')).join('');
+}
+
+/**
+ * Aplica a identidade visual da marca aberta. Em vez de espalhar `if marca
+ * === 'samsonite'` pela tela toda, troco a variável de cor que todas as
+ * regras de CSS já usam — o realce, os botões, as bolinhas de cor e a barra
+ * do carrinho mudam juntos, sozinhos.
+ */
+function aplicarTemaDaMarca(marca) {
+  const cor = (marca && marca.corPrimaria) || '#EB8704';
+  document.documentElement.style.setProperty('--laranja', cor);
+  document.documentElement.style.setProperty('--laranja-claro', corClara(cor));
+
+  const logo = $('logo-marca');
+  // A logo da marca vai sobre o cabeçalho PRETO, então vale a versão clara.
+  // Quando a marca não tem logo cadastrada, mostro o nome dela em texto em
+  // vez de deixar um buraco ou, pior, a logo da marca anterior.
+  if (marca && marca.logoClara) {
+    logo.src = '/logos/' + marca.logoClara;
+    logo.style.display = '';
+    logo.nextElementSibling && (logo.nextElementSibling.textContent = '');
+  } else if (marca && marca.slug === 'maxprint') {
+    logo.src = '/logos/maxprint.png';
+    logo.style.display = '';
+  } else {
+    logo.style.display = 'none';
+  }
+  document.title = `Catálogo ${marca ? marca.nome : ''} · Ativação`;
+}
+
+/* ==================================================================
+   Marcas (abas)
+   ================================================================== */
+async function carregarMarcas() {
+  const r = await fetch('/api/marcas');
+  if (r.status === 401) { location.href = '/login'; return; }
+  S.marcas = await r.json().catch(() => []);
+  if (!S.marcas.length) S.marcas = [{ slug:'maxprint', nome:'Maxprint', corPrimaria:'#EB8704' }];
+
+  // A marca aberta sobrevive ao recarregar a página: quem estava vendo
+  // Samsonite volta na Samsonite, não na primeira aba.
+  const salva = sessionStorage.getItem('marca');
+  S.marca = (salva && S.marcas.some(m => m.slug === salva)) ? salva : S.marcas[0].slug;
+
+  desenharAbasMarca();
+}
+
+function desenharAbasMarca() {
+  const barra = $('abas-marca');
+  // Uma marca só = sem abas. A tela fica exatamente como era antes do
+  // sistema virar multimarca, sem uma barra inútil ocupando altura.
+  if (S.marcas.length < 2) {
+    barra.style.display = 'none';
+    document.documentElement.style.setProperty('--abas', '0px');
+    return;
+  }
+  barra.style.display = '';
+  barra.innerHTML = S.marcas.map(m => `
+    <button data-marca="${escapar(m.slug)}" class="${m.slug===S.marca?'ativa':''}"
+            style="${m.slug===S.marca?`border-bottom-color:${escapar(m.corPrimaria)}`:''}">
+      <span class="bola" style="background:${escapar(m.corPrimaria||'#888')}"></span>
+      ${escapar(m.nome)}
+    </button>`).join('');
+  document.documentElement.style.setProperty('--abas', barra.offsetHeight + 'px');
+
+  barra.querySelectorAll('[data-marca]').forEach(b => {
+    b.addEventListener('click', () => trocarMarca(b.dataset.marca));
+  });
+}
+
+async function trocarMarca(slug) {
+  if (slug === S.marca) return;
+  salvar();                       // guarda o carrinho da marca que estou saindo
+  S.marca = slug;
+  sessionStorage.setItem('marca', slug);
+
+  // Filtros de uma marca não fazem sentido na outra: "Periféricos" não
+  // existe na Samsonite. Zero tudo para não abrir a aba nova já vazia.
+  S.categoria = null; S.linha = null; S.busca = ''; $('busca').value = '';
+  S.corEscolhida = {};
+  S.condicao = '30';
+
+  restaurar();                    // e traz o carrinho da marca que estou entrando
+  desenharAbasMarca();
+  await carregar();
+  atualizarBadge();
+  window.scrollTo({ top: 0 });
+}
+
 /* ==================================================================
    Carga
    ================================================================== */
 async function carregar() {
-  const r = await fetch('/api/catalogo?condicao=' + encodeURIComponent(S.condicao));
+  const r = await fetch('/api/catalogo?condicao=' + encodeURIComponent(S.condicao) +
+                        '&marca=' + encodeURIComponent(S.marca || 'maxprint'));
   if (r.status === 423) {
     const d = await r.json();
     document.body.innerHTML =
       '<div style="max-width:460px;margin:14vh auto;background:#fff;padding:34px;border-radius:14px;text-align:center">' +
-      '<img src="/logos/ativacao.png" style="height:26px;margin:0 auto 18px">' +
+      '<img src="/logos/ativacao-preta.png" style="height:26px;margin:0 auto 18px">' +
       '<h2 style="margin:0 0 8px">Catálogo ainda não liberado</h2>' +
       '<p style="color:#8D8E8E">' + escapar(d.erro) + '</p>' +
       '<p><a href="/login" style="color:#EB8704">Voltar</a></p></div>';
@@ -310,35 +567,74 @@ async function carregar() {
   if (r.status === 401) { location.href = '/login'; return; }
   S.dados = await r.json();
   S.cards = montarCards(S.dados.produtos);
+  aplicarTemaDaMarca(S.marcas.find(m => m.slug === S.marca));
+
+  // Item que saiu do catálogo não pode ficar preso no carrinho invisível,
+  // somando valor que o cliente não vê. Limpo na hora de carregar.
+  const vivos = new Set(S.dados.produtos.map(p => p.codigo));
+  let removidos = 0;
+  for (const codigo of Object.keys(S.carrinho)) {
+    if (!vivos.has(codigo)) { delete S.carrinho[codigo]; removidos++; }
+  }
+  if (removidos) { salvar(); atualizarBadge(); }
+
   montarMenu();
   montarCondicoes();
   desenhar();
   recalcular();
 }
 
-/** Agrupa as cores irmãs num card só. Cada cor continua sendo um código. */
+/**
+ * Agrupa as cores irmãs num card só. Duas amarras, as duas pedidas na prática:
+ *
+ * 1) só agrupa o que o catálogo declarou como "Cores disponíveis" (isso vem
+ *    resolvido do servidor, no campo grupoCores);
+ * 2) dentro do grupo, só ficam juntas as cores de MESMO PREÇO. Preço diferente
+ *    vira card próprio, porque aí não é a mesma compra — é outro item. Sem
+ *    isso, o cliente clicava na bolinha da cor e o valor mudava embaixo dele.
+ *
+ * Cada cor continua sendo um código próprio no pedido, que é como a Maxprint
+ * precisa receber.
+ */
 function montarCards(produtos) {
   const porCodigo = new Map(produtos.map(p => [p.codigo, p]));
   const usados = new Set();
   const cards = [];
+
+  const novoCard = (cores) => ({
+    chave: cores[0].codigo,
+    nome: cores[0].nome,
+    categoria: cores[0].categoria,
+    linha: cores[0].linhaProduto,
+    curvaA: cores.some(c => c.curvaA),
+    outlet: cores.some(c => c.outlet),
+    cores,
+  });
+
   for (const p of produtos) {
     if (usados.has(p.codigo)) continue;
-    let cores = (p.grupoCores || [])
+
+    let irmaos = (p.grupoCores || [])
       .map(c => porCodigo.get(String(c)))
       .filter(x => x && !usados.has(x.codigo));
-    if (!cores.length) cores = [p];
-    if (!cores.find(c => c.codigo === p.codigo)) cores.unshift(p);
-    cores.forEach(c => usados.add(c.codigo));
-    cards.push({
-      chave: cores[0].codigo,
-      nome: cores[0].nome,
-      categoria: cores[0].categoria,
-      linha: cores[0].linhaProduto,
-      curvaA: cores.some(c => c.curvaA),
-      outlet: cores.some(c => c.outlet),
-      cores,
-    });
+    if (!irmaos.length) irmaos = [p];
+    if (!irmaos.find(c => c.codigo === p.codigo)) irmaos.unshift(p);
+    irmaos.forEach(c => usados.add(c.codigo));
+
+    // Separa por preço, mantendo a ordem original dentro de cada faixa.
+    const porPreco = new Map();
+    for (const c of irmaos) {
+      const chave = Number(c.preco).toFixed(2);
+      if (!porPreco.has(chave)) porPreco.set(chave, []);
+      porPreco.get(chave).push(c);
+    }
+
+    // O card do produto clicado vem primeiro; os outros preços vêm em seguida.
+    const grupos = [...porPreco.values()];
+    grupos.sort((a, b) => (a.some(x => x.codigo === p.codigo) ? -1 : b.some(x => x.codigo === p.codigo) ? 1 : 0));
+    grupos.forEach(g => cards.push(novoCard(g)));
   }
+
   return cards;
 }
 
@@ -371,6 +667,31 @@ function montarMenu() {
       window.scrollTo({ top: 0, behavior:'smooth' });
     });
   });
+
+  montarFiltroCelular();
+}
+
+/** Mesma navegação do menu lateral, num seletor — é o que cabe no celular. */
+function montarFiltroCelular() {
+  const sel = $('filtro-celular');
+  const opcoes = [`<option value="">Todos os produtos (${S.dados.produtos.length})</option>`];
+  for (const cat of S.dados.categorias) {
+    const n = S.cards.reduce((a,c) => a + c.cores.filter(x => x.categoria === cat).length, 0);
+    opcoes.push(`<option value="${escapar(cat)}"${S.categoria===cat&&!S.linha?' selected':''}>${escapar(cat)} (${n})</option>`);
+    for (const l of (S.dados.linhas[cat] || [])) {
+      const n2 = S.cards.reduce((a,c) => a + c.cores.filter(x => x.categoria === cat && x.linhaProduto === l).length, 0);
+      opcoes.push(`<option value="${escapar(cat)}|${escapar(l)}"${S.categoria===cat&&S.linha===l?' selected':''}>
+        &nbsp;&nbsp;${escapar(l)} (${n2})</option>`);
+    }
+  }
+  sel.innerHTML = opcoes.join('');
+  sel.onchange = (e) => {
+    const [cat, linha] = e.target.value.split('|');
+    S.categoria = cat || null;
+    S.linha = linha || null;
+    montarMenu(); desenhar();
+    window.scrollTo({ top: 0, behavior:'smooth' });
+  };
 }
 
 function link(cat, linha, rotulo, n) {
@@ -379,14 +700,43 @@ function link(cat, linha, rotulo, n) {
             <span>${rotulo}</span><span class="n">${n}</span></a>`;
 }
 
+/**
+ * Condições que o cliente pode escolher AGORA.
+ *
+ * A Samsonite libera prazos mais longos (60/90, 90, 60/90/120) só quando o
+ * pedido passa de R$ 15.000. Enquanto não passa, a opção aparece desativada
+ * com o motivo escrito — some do nada seria pior: o cliente que ouviu falar
+ * do prazo maior acharia que o sistema está errado.
+ *
+ * Esconder ou desativar aqui é conforto de tela; quem recusa de verdade é o
+ * servidor, em routes/pedidos.js.
+ */
 function montarCondicoes() {
-  $('condicao').innerHTML = S.dados.condicoes
-    .map(c => `<option value="${c.id}"${c.id===S.condicao?' selected':''}>${escapar(c.rotulo)}</option>`)
-    .join('');
+  const total = (S.previa && S.previa.total) || 0;
+  const extra = S.dados.condicoesAcimaDeValor;
+  const liberouExtra = extra && total >= extra.valorMinimo;
+
+  const opcoes = S.dados.condicoes.map(c =>
+    `<option value="${c.id}"${c.id===S.condicao?' selected':''}>${escapar(c.rotulo)}</option>`);
+
+  if (extra && extra.condicoes.length) {
+    opcoes.push(`<optgroup label="${liberouExtra
+      ? 'Prazos longos (liberados)'
+      : `Acima de ${dinheiro(extra.valorMinimo)}`}">`);
+    opcoes.push(...extra.condicoes.map(c =>
+      `<option value="${c.id}"${c.id===S.condicao?' selected':''}${liberouExtra?'':' disabled'}>
+         ${escapar(c.rotulo)}</option>`));
+    opcoes.push('</optgroup>');
+  }
+  $('condicao').innerHTML = opcoes.join('');
+
   const chip = $('chip-acrescimo');
   if (S.dados.acrescimoPrazo > 0) {
     chip.style.display = '';
     chip.textContent = `prazo médio ${S.dados.prazoMedio} dias · +${(S.dados.acrescimoPrazo*100).toFixed(2)}%`;
+  } else if (extra && extra.condicoes.length && !liberouExtra) {
+    chip.style.display = '';
+    chip.textContent = `${dinheiro(extra.valorMinimo - total)} para liberar ${extra.condicoes.map(c=>c.rotulo).join(', ')}`;
   } else {
     chip.style.display = 'none';
   }
@@ -500,6 +850,12 @@ function cardHtml(card) {
     c.imagemIlustrativa ? 'foto ilustrativa da linha' : '',
   ].filter(Boolean).join(' · ');
 
+  // Atalho para a janela com todas as cores. Só faz sentido quando há mais
+  // de uma; num produto de cor única a janela não mostraria nada novo.
+  const verCores = temCores
+    ? `<div class="ver-cores" data-ver-cores="${card.chave}">ver as ${card.cores.length} cores →</div>`
+    : '';
+
   if (S.modoLista) {
     return `<div class="card${qtd?' tem':''}" data-card="${card.chave}">
       <div class="foto">${foto}</div>
@@ -521,23 +877,101 @@ function cardHtml(card) {
 
   return `<div class="card${qtd?' tem':''}" data-card="${card.chave}">
     <div class="selos">${selos}</div>
-    <div class="foto">${foto}</div>
+    <div class="foto" ${temCores?`data-ver-cores="${card.chave}" style="cursor:pointer"`:''}>${foto}</div>
     <div class="cod">${escapar(c.codigoOriginal || c.codigo)}</div>
     <div class="nome">${escapar(card.nome)}</div>
+    ${c.cor ? `<div class="cod" style="margin:-4px 0 6px">${escapar(c.cor)}</div>` : ''}
     ${cores}
     <div class="linha-preco"><span class="preco">${dinheiro(c.preco)}</span><span class="unidade">por unidade</span></div>
     ${estoque}
     ${controles}
+    ${verCores}
     ${infoExtra ? `<div class="info">${infoExtra}</div>` : ''}
   </div>`;
+}
+
+/**
+ * Janela com TODAS as cores da linha, cada uma com foto, código, preço,
+ * saldo e campo de quantidade próprio — pedido do Marcelo, para não
+ * precisar clicar cor por cor só para saber o que existe.
+ */
+function abrirCores(chave) {
+  const card = S.cards.find(c => c.chave === chave);
+  if (!card) return;
+
+  const desenharJanela = () => {
+    $('janela').innerHTML = `
+      <h2>${escapar(card.nome)}</h2>
+      <p class="sub">${card.cores.length} cores nesta linha. Digite a quantidade em cada uma.</p>
+      <div class="cores-lista">
+        ${card.cores.map(x => {
+          const q = S.carrinho[x.codigo] || '';
+          const excedeu = q && Number(q) > x.limite;
+          return `<div class="cor-item${q?' tem':''}">
+            <div class="foto">${x.imagem
+              ? `<img src="/img/${x.imagem}" loading="lazy" alt="${escapar(x.cor||x.nome)}">`
+              : '<div class="vazio">sem foto</div>'}</div>
+            <div class="nome-cor">${escapar(x.cor || x.nome)}</div>
+            <div class="cod">${escapar(x.codigoOriginal || x.codigo)}</div>
+            <div class="linha-preco">
+              <span class="preco">${dinheiro(x.preco)}</span>
+              ${x.emPromocao && x.precoCheio > x.preco
+                ? `<span class="preco-cheio">${dinheiro(x.precoCheio)}</span>` : ''}
+            </div>
+            ${x.disponivel
+              ? `<div class="estoque ok">${x.estoque.toLocaleString('pt-BR')} disponíveis</div>`
+              : `<div class="estoque prog">Chega em ${escapar((x.chegadas[0]||{}).rotulo || 'breve')} · ${x.previsto.toLocaleString('pt-BR')} peças</div>`}
+            <div class="qtd">
+              <button data-jmenos="${x.codigo}">−</button>
+              <input type="number" min="0" max="${x.limite}" step="1" value="${q}"
+                     data-jqtd="${x.codigo}" class="${excedeu?'excedeu':''}" placeholder="0">
+              <button data-jmais="${x.codigo}">+</button>
+            </div>
+            ${excedeu ? `<div class="msg-erro">Máximo ${x.limite.toLocaleString('pt-BR')}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="acoes" style="margin-top:16px">
+        <button class="btn secundario" id="j-fechar">Fechar</button>
+        <button class="btn principal" id="j-carrinho">Ver carrinho</button>
+      </div>`;
+
+    $('j-fechar').onclick = () => $('tapa').classList.remove('aberto');
+    $('j-carrinho').onclick = () => {
+      $('tapa').classList.remove('aberto');
+      $('carrinho').classList.add('aberto');
+    };
+
+    // Mexer na quantidade aqui precisa refletir no card lá atrás também,
+    // por isso o desenhar() no fim de cada ação.
+    const mexeu = () => { desenharJanela(); desenhar(); };
+    $('janela').querySelectorAll('[data-jqtd]').forEach(i => {
+      i.addEventListener('input', () => definirQtd(i.dataset.jqtd, i.value));
+      i.addEventListener('change', mexeu);
+    });
+    $('janela').querySelectorAll('[data-jmais]').forEach(b => b.addEventListener('click', () => {
+      definirQtd(b.dataset.jmais, Number(S.carrinho[b.dataset.jmais] || 0) + 1); mexeu();
+    }));
+    $('janela').querySelectorAll('[data-jmenos]').forEach(b => b.addEventListener('click', () => {
+      definirQtd(b.dataset.jmenos, Number(S.carrinho[b.dataset.jmenos] || 0) - 1); mexeu();
+    }));
+  };
+
+  desenharJanela();
+  $('tapa').classList.add('aberto');
 }
 
 function ligarEventosGrade() {
   document.querySelectorAll('[data-cor]').forEach(b => {
     b.addEventListener('click', () => {
+      // Trocar a cor troca a foto, o código, o preço e o saldo do card —
+      // o desenhar() reconstrói tudo a partir de corAtual().
       S.corEscolhida[b.dataset.card] = b.dataset.cor;
       desenhar();
     });
+  });
+  document.querySelectorAll('[data-ver-cores]').forEach(b => {
+    b.addEventListener('click', () => abrirCores(b.dataset.verCores));
   });
   document.querySelectorAll('[data-qtd]').forEach(i => {
     i.addEventListener('input', () => definirQtd(i.dataset.qtd, i.value));
@@ -568,8 +1002,29 @@ function definirQtd(codigo, valor) {
   salvar();
   recalcular();
   atualizarBadge();
-  const card = document.querySelector(`[data-qtd="${codigo}"]`)?.closest('.card');
+
+  const campo = document.querySelector(`[data-qtd="${codigo}"]`);
+  const card = campo?.closest('.card');
   if (card) card.classList.toggle('tem', n > 0);
+
+  // Redesenhar o card inteiro enquanto o cliente digita tiraria o cursor do
+  // campo. Então o aviso de "passou do saldo" é marcado no próprio campo,
+  // na hora, sem refazer nada em volta.
+  const p = produtoPorCodigo(codigo);
+  if (campo && p) {
+    const excedeu = n > p.limite;
+    campo.classList.toggle('excedeu', excedeu);
+    let msg = card && card.querySelector('.msg-erro');
+    if (excedeu && card && !msg) {
+      msg = document.createElement('div');
+      msg.className = 'msg-erro';
+      campo.closest('.qtd').insertAdjacentElement('afterend', msg);
+    }
+    if (msg) {
+      msg.textContent = excedeu ? `Máximo ${p.limite.toLocaleString('pt-BR')}` : '';
+      msg.style.display = excedeu ? '' : 'none';
+    }
+  }
 }
 
 function atualizarBadge() {
@@ -594,10 +1049,12 @@ async function pedirPrevia() {
   }
   const r = await fetch('/api/pedidos/previa', {
     method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({ itens, condicao: S.condicao }),
+    body: JSON.stringify({ itens, condicao: S.condicao, marca: S.marca }),
   });
   S.previa = await r.json();
   desenharCarrinho();
+  // O total mudou, então o que está liberado de prazo pode ter mudado junto.
+  montarCondicoes();
 }
 
 function desenharCarrinho() {
@@ -614,6 +1071,13 @@ function desenharCarrinho() {
     $('linha-pronta').style.display = 'none';
     $('linha-prog').style.display = 'none';
     $('btn-fechar').disabled = true;
+    atualizarBarra(null);
+
+    // Carrinho vazio porque TODOS os itens foram recusados por saldo é
+    // diferente de carrinho vazio porque ninguém digitou nada. Sem este
+    // aviso o cliente digita 20, não acontece nada e ele não sabe por quê.
+    if (p && p.recusados && p.recusados.length) avisarRecusados(p.recusados);
+    else limparAvisos();
     return;
   }
 
@@ -654,13 +1118,33 @@ function desenharCarrinho() {
   }
 
   $('btn-fechar').disabled = !p.atingiuMinimo;
+  atualizarBarra(p);
 
-  if (p.recusados && p.recusados.length) {
-    mostrarAviso('erro', 'Alguns itens passaram do estoque: ' +
-      p.recusados.map(r => `${r.nome} (máx. ${r.limite})`).join(', '));
-  } else {
-    limparAvisos();
+  if (p.recusados && p.recusados.length) avisarRecusados(p.recusados);
+  else limparAvisos();
+}
+
+function avisarRecusados(recusados) {
+  mostrarAviso('erro', 'Passou do que existe em estoque: ' +
+    recusados.map(r => `${r.nome} (você pediu ${r.pedido}, o máximo é ${r.limite})`).join(' · '));
+}
+
+/** Resumo sempre visível no rodapé. */
+function atualizarBarra(p) {
+  const barra = $('barra-inferior');
+  if (!p || !p.itens || !p.itens.length) {
+    barra.classList.remove('on');
+    return;
   }
+  barra.classList.add('on');
+  $('b-total').textContent = dinheiro(p.total);
+  $('b-conta').textContent = `${p.itens.length} itens · ${p.pecas} peças`;
+  $('b-barra').style.width = Math.min(100, (p.total / p.pedidoMinimo) * 100) + '%';
+  $('b-falta').textContent = p.atingiuMinimo
+    ? 'Pedido mínimo atingido'
+    : `Faltam ${dinheiro(p.faltaParaMinimo)} para fechar`;
+  $('b-cif').classList.toggle('on', !!p.freteCif);
+  $('b-fechar').disabled = !p.atingiuMinimo;
 }
 
 function mostrarAviso(tipo, texto) {
@@ -742,6 +1226,7 @@ function corpoDoPedido() {
   return {
     itens: Object.entries(S.carrinho).map(([codigo, quantidade]) => ({ codigo, quantidade })),
     condicao: S.condicao,
+    marca: S.marca,
     cabecalho: cabecalhoDoFormulario(),
   };
 }
@@ -845,13 +1330,21 @@ async function meusPedidos() {
 /* ==================================================================
    Persistência local do rascunho
    ================================================================== */
+/**
+ * Um rascunho POR MARCA, em chaves separadas. Cada marca vira um pedido
+ * próprio (a Maxprint e a Samsonite são fábricas diferentes, com nota
+ * diferente), então misturar os dois carrinhos daria pedido inválido.
+ * Trocar de aba guarda um e traz o outro.
+ */
+function chaveCarrinho() { return 'carrinho_' + (S.marca || 'maxprint'); }
+
 function salvar() {
-  try { sessionStorage.setItem('carrinho', JSON.stringify(S.carrinho)); } catch (_) {}
+  try { sessionStorage.setItem(chaveCarrinho(), JSON.stringify(S.carrinho)); } catch (_) {}
 }
 function restaurar() {
   try {
-    const s = sessionStorage.getItem('carrinho');
-    if (s) S.carrinho = JSON.parse(s) || {};
+    const s = sessionStorage.getItem(chaveCarrinho());
+    S.carrinho = s ? (JSON.parse(s) || {}) : {};
   } catch (_) { S.carrinho = {}; }
 }
 
@@ -868,6 +1361,8 @@ $('btn-limpar').addEventListener('click', () => {
   S.carrinho = {}; salvar(); atualizarBadge(); recalcular(); desenhar();
 });
 $('btn-fechar').addEventListener('click', abrirFechamento);
+$('b-fechar').addEventListener('click', abrirFechamento);
+$('b-ver').addEventListener('click', () => $('carrinho').classList.toggle('aberto'));
 $('btn-meus').addEventListener('click', meusPedidos);
 $('btn-sair').addEventListener('click', async () => {
   await fetch('/api/auth/sair', { method:'POST' });
@@ -881,9 +1376,14 @@ $('tapa').addEventListener('click', (e) => {
   if (e.target === $('tapa')) $('tapa').classList.remove('aberto');
 });
 
-restaurar();
-atualizarBadge();
-carregar();
+/* As abas vêm primeiro: é a marca escolhida que decide qual carrinho
+   restaurar e qual catálogo carregar. */
+(async () => {
+  await carregarMarcas();
+  restaurar();
+  atualizarBadge();
+  await carregar();
+})();
 </script>
 </body>
 </html>

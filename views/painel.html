@@ -85,13 +85,50 @@ a.acao{ text-decoration:none; color:inherit; }
 .campos{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .campos .cheio{ grid-column:1/-1; }
 .oculto{ display:none !important; }
+
+/* escolha de marcas no cadastro do cliente e na aba Marcas */
+.marcas-escolha{ display:flex; flex-wrap:wrap; gap:8px; }
+/* `text-transform` e o tamanho pequeno vêm de `.campo label`, que serve para
+   rótulo de campo. Aqui o texto é o NOME DA MARCA — tem que sair como está
+   escrito ("American Tourister", não "AMERICAN TOURISTER"). */
+.marca-op{ display:flex; align-items:center; gap:7px; border:1.5px solid var(--borda);
+           border-radius:9px; padding:8px 12px; font-size:13.5px; cursor:pointer; background:#fff;
+           text-transform:none; letter-spacing:normal; color:var(--preto); font-weight:500;
+           margin-bottom:0; }
+.marca-op:has(input:checked){ border-color:var(--laranja); background:var(--laranja-claro); font-weight:600; }
+.marca-op input{ margin:0; }
+.ponto{ width:11px; height:11px; border-radius:50%; display:inline-block; flex:none; }
+
+/* Tabela larga em tela estreita: rola sozinha em vez de espremer as colunas
+   até o texto virar uma coluna de letras. */
+.rolagem{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
 @media (max-width:900px){ .grade-rel{ grid-template-columns:1fr; } .campos{ grid-template-columns:1fr; } }
+
+@media (max-width:640px){
+  header{ height:52px; padding:0 12px; gap:9px; }
+  header .titulo{ display:none; }
+  header #quem{ display:none; }
+  .abas{ top:52px; padding:0 8px; }
+  .abas button{ padding:12px 11px; font-size:13px; }
+  main{ padding:16px 12px 70px; }
+  .painel{ padding:14px; }
+  .cartoes{ grid-template-columns:1fr 1fr; gap:9px; }
+  .cartao .v{ font-size:21px; }
+  .janela{ padding:18px 16px; }
+  .import{ grid-template-columns:1fr; }
+  /* Tabela do painel no celular: em vez de espremer as colunas até o texto
+     virar uma coluna de letras, o bloco inteiro rola de lado. Vale para
+     qualquer tabela, esteja ela dentro de .rolagem ou não. */
+  .painel{ overflow-x:auto; }
+  .painel table{ min-width:560px; }
+}
 </style>
 </head>
 <body>
 
 <header>
-  <img src="/logos/ativacao.png" alt="Ativação">
+  <img src="/logos/ativacao-branca.png" alt="Ativação">
   <div class="barra"></div>
   <img class="mx" src="/logos/maxprint.png" alt="Maxprint">
   <span class="titulo">Painel de pedidos</span>
@@ -105,6 +142,7 @@ a.acao{ text-decoration:none; color:inherit; }
   <button data-aba="importar">Importar bases</button>
   <button data-aba="clientes">Clientes</button>
   <button data-aba="produtos">Produtos e fotos</button>
+  <button data-aba="marcas">Marcas</button>
   <button data-aba="relatorios">Relatórios</button>
   <button data-aba="config">Configuração</button>
 </div>
@@ -114,6 +152,7 @@ a.acao{ text-decoration:none; color:inherit; }
   <section id="aba-importar" class="oculto"></section>
   <section id="aba-clientes" class="oculto"></section>
   <section id="aba-produtos" class="oculto"></section>
+  <section id="aba-marcas" class="oculto"></section>
   <section id="aba-relatorios" class="oculto"></section>
   <section id="aba-config" class="oculto"></section>
 </main>
@@ -142,7 +181,8 @@ document.querySelectorAll('.abas button').forEach(b => {
     document.querySelectorAll('main section').forEach(s => s.classList.add('oculto'));
     $('aba-' + b.dataset.aba).classList.remove('oculto');
     ({ pedidos: abaPedidos, importar: abaImportar, clientes: abaClientes,
-       produtos: abaProdutos, relatorios: abaRelatorios, config: abaConfig })[b.dataset.aba]();
+       produtos: abaProdutos, marcas: abaMarcas, relatorios: abaRelatorios,
+       config: abaConfig })[b.dataset.aba]();
   });
 });
 
@@ -173,6 +213,17 @@ async function abaPedidos() {
       <div class="cartao"><div class="r">Clientes ativos</div><div class="v">${resumo.clientes}</div></div>
     </div>
 
+    ${resumo.emailConfigurado === false ? `<div class="aviso erro">
+      <b>O aviso de pedido novo por e-mail está desligado.</b> Falta a chave do serviço de envio
+      (<code>EMAIL_API_KEY</code>) no arquivo <code>.env</code> do servidor. Enquanto isso, os pedidos
+      chegam normalmente e aparecem aqui, mas ninguém é avisado por e-mail.
+      ${resumo.naoAvisados ? `<br>${resumo.naoAvisados} pedido(s) novo(s) ficaram sem aviso.` : ''}
+    </div>` : `<div class="aviso ok" style="display:flex;align-items:center;gap:12px">
+      <span>Aviso de pedido novo por e-mail: <b>ligado</b>.</span>
+      <button class="acao" id="testar-email">Enviar e-mail de teste</button>
+      <span id="resultado-email"></span>
+    </div>`}
+
     ${resumo.semFoto > 0 ? `<div class="aviso">${resumo.semFoto} produtos estão no catálogo sem foto.
       Veja a aba <b>Produtos e fotos</b> para anexar as imagens dos que importam.</div>` : ''}
 
@@ -189,6 +240,19 @@ async function abaPedidos() {
     </div>`;
 
   ligarPedidos();
+
+  const bt = $('testar-email');
+  if (bt) bt.onclick = async () => {
+    bt.disabled = true; bt.textContent = 'enviando...';
+    try {
+      const d = await api('/api/admin/testar-email', { method: 'POST' });
+      $('resultado-email').innerHTML = `<b style="color:var(--verde)">enviado para ${d.para.join(', ')}</b>`;
+    } catch (e) {
+      $('resultado-email').innerHTML = `<b style="color:var(--vermelho)">${esc(e.message)}</b>`;
+    } finally {
+      bt.disabled = false; bt.textContent = 'Enviar e-mail de teste';
+    }
+  };
 }
 
 function tabelaPedidos(lista, vazio) {
@@ -281,11 +345,17 @@ async function abaImportar() {
     return b ? data(b.atualizadoEm) : 'nunca';
   };
 
+  const marcas = await api('/api/admin/marcas').catch(() => []);
+  const temSamsonite = marcas.some(m => m.slug === 'samsonite');
+  const contaMarca = (slug) => (situacao.porMarca || []).find(m => m.marca === slug) || { produtos:0, semFoto:0 };
+
   $('aba-importar').innerHTML = `
     <h1>Importar bases</h1>
-    <p class="sub">O sistema não guarda nada chumbado. Tudo vem destes três arquivos.</p>
+    <p class="sub">O sistema não guarda nada chumbado. Tudo vem dos arquivos que você sobe aqui.</p>
 
     <div class="painel">
+      <h2>Maxprint</h2>
+      <p class="d">As três bases se cruzam entre si. Qualquer uma que mudar refaz o catálogo inteiro da Maxprint.</p>
       <div class="import">
         <div class="caixa-import">
           <h3>1 · Catálogos em PDF</h3>
@@ -317,6 +387,39 @@ async function abaImportar() {
       <div id="resultado"></div>
     </div>
 
+    ${!temSamsonite ? '' : `
+    <div class="painel">
+      <h2>Samsonite</h2>
+      <p class="d">Aqui é diferente da Maxprint: preço, saldo e descrição vêm todos do mesmo arquivo HTML.
+         Os catálogos em PDF são opcionais e servem só para trazer a foto de cada cor.</p>
+      <div class="import">
+        <div class="caixa-import">
+          <h3>Base da Samsonite (obrigatório)</h3>
+          <p>O arquivo HTML da aplicação antiga. Traz os ~1.500 itens com preço, saldo, cor e promoção.</p>
+          <input type="file" id="f-sam-base" accept=".html,.htm,.json">
+          <label for="f-sam-base">Escolher HTML</label>
+          <div class="arqs" id="a-sam-base">nenhum escolhido</div>
+        </div>
+
+        <div class="caixa-import">
+          <h3>Catálogos em PDF (opcional)</h3>
+          <p>De onde saem as fotos por cor. Pode subir os dois (Samsonite/American Tourister e BTS/Xtrem) juntos.</p>
+          <input type="file" id="f-sam-pdfs" accept=".pdf" multiple>
+          <label for="f-sam-pdfs">Escolher PDFs</label>
+          <div class="arqs" id="a-sam-pdfs">nenhum escolhido</div>
+        </div>
+
+        <div class="caixa-import" style="border-style:solid;background:var(--claro)">
+          <h3>Situação hoje</h3>
+          <p>${contaMarca('samsonite').produtos} produtos ativos ·
+             ${contaMarca('samsonite').semFoto} sem foto</p>
+          <button class="primaria" id="b-sam-importar" disabled>Importar Samsonite</button>
+          <div class="arqs">A leitura dos PDFs leva alguns minutos.</div>
+        </div>
+      </div>
+      <div id="resultado-sam"></div>
+    </div>`}
+
     <div class="painel">
       <h2>Histórico de importações</h2>
       <p class="d">Serve para responder "por que esse item sumiu do catálogo".</p>
@@ -335,6 +438,115 @@ async function abaImportar() {
   ligarImport('catalogo');
   ligarImport('estoque');
   ligarImport('preco');
+  if (temSamsonite) ligarImportSamsonite();
+}
+
+/**
+ * A Samsonite tem botão próprio (em vez de disparar na hora que escolhe o
+ * arquivo, como a Maxprint) porque são dois campos que precisam ser
+ * escolhidos antes de começar — e porque a importação demora, então começar
+ * sem querer custaria caro.
+ */
+function ligarImportSamsonite() {
+  const base = $('f-sam-base'), pdfs = $('f-sam-pdfs'), botao = $('b-sam-importar');
+
+  const conferir = () => {
+    $('a-sam-base').textContent = base.files.length ? base.files[0].name : 'nenhum escolhido';
+    $('a-sam-pdfs').textContent = pdfs.files.length ? pdfs.files.length + ' PDF(s)' : 'nenhum escolhido';
+    botao.disabled = !base.files.length;
+  };
+  base.addEventListener('change', conferir);
+  pdfs.addEventListener('change', conferir);
+
+  botao.onclick = async () => {
+    const fd = new FormData();
+    fd.append('base', base.files[0]);
+    for (const f of pdfs.files) fd.append('pdfs', f);
+
+    botao.disabled = true;
+    $('resultado-sam').innerHTML = '<div class="aviso">Enviando os arquivos...</div>';
+
+    try {
+      const { tarefa } = await api('/api/importacao/samsonite', { method:'POST', body: fd });
+      acompanharSamsonite(tarefa);
+    } catch (e) {
+      $('resultado-sam').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      botao.disabled = false;
+    }
+  };
+}
+
+/**
+ * A importação roda no servidor em segundo plano; aqui só pergunto de tempos
+ * em tempos como está. Sem isso a conexão morreria no meio da leitura dos
+ * PDFs, que passa de vários minutos.
+ */
+async function acompanharSamsonite(id) {
+  const alvo = $('resultado-sam');
+  if (!alvo) return; // o admin trocou de aba, não tem mais onde escrever
+
+  let t;
+  try {
+    t = await api('/api/importacao/samsonite/status/' + id);
+  } catch (e) {
+    alvo.innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+    return;
+  }
+
+  if (t.estado === 'rodando') {
+    alvo.innerHTML = `<div class="aviso">
+      <b>Importando a Samsonite...</b> ${esc(t.etapa)}
+      <div style="background:#E5E5E7;border-radius:20px;height:7px;margin-top:9px;overflow:hidden">
+        <div style="background:var(--laranja);height:100%;width:${t.progresso||0}%;transition:width .4s"></div>
+      </div>
+      <div style="font-size:11.5px;color:var(--cinza);margin-top:6px">
+        Pode sair desta tela; a importação continua no servidor.</div>
+    </div>`;
+    setTimeout(() => acompanharSamsonite(id), 3000);
+    return;
+  }
+
+  if (t.estado === 'erro') {
+    alvo.innerHTML = `<div class="aviso erro"><b>A importação falhou.</b><br>${esc(t.erro)}</div>`;
+    const b = $('b-sam-importar'); if (b) b.disabled = false;
+    return;
+  }
+
+  alvo.innerHTML = relatorioSamsoniteHtml(t);
+}
+
+function relatorioSamsoniteHtml(t) {
+  const r = t.relatorio || {};
+  const cruz = r.cruzamentoFotos || null;
+  const linhas = [
+    ['Produtos no catálogo do cliente', r.totalValido],
+    ['Com saldo hoje', r.comSaldo],
+    ['Sem saldo (entram como programado)', r.semSaldo],
+    ['Em promoção', r.emPromocao],
+    ['Grupos de cor formados', r.gruposDeCor],
+    ['Com foto do produto', cruz ? cruz.totalComFoto : undefined],
+    ['Sem foto (completar em Produtos e fotos)', cruz ? cruz.totalSemFoto : undefined],
+    ['Fora por falta de preço', r.foraPorFaltaDePreco],
+    ['Desativados (saíram da base)', r.desativados],
+  ].filter(l => l[1] !== undefined);
+
+  const porSub = Object.entries(r.porSubMarca || {});
+
+  return `<div class="aviso ok">
+      <b>Samsonite importada.</b>
+      <table style="margin-top:10px">${linhas.map(l =>
+        `<tr><td style="border:0;padding:3px 0">${l[0]}</td>
+             <td style="border:0;padding:3px 0;text-align:right"><b>${l[1]}</b></td></tr>`).join('')}</table>
+      ${porSub.length ? `<div style="margin-top:10px;font-size:12px">
+        <b>Por sub-marca:</b> ${porSub.map(([k,v]) => `${esc(k)}: ${v}`).join(' · ')}</div>` : ''}
+      ${cruz ? `<div style="margin-top:8px;font-size:12px">
+        Fotos casadas por código: ${cruz.casadosPorCodigo} ·
+        por descrição e cor: ${cruz.coresCasadasPorTexto}</div>` : `
+        <div style="margin-top:8px;font-size:12px">Nenhum PDF enviado, então os produtos ficaram sem foto.</div>`}
+    </div>
+    ${(t.avisos||[]).length ? `<div class="aviso"><b>${t.avisos.length} avisos:</b><br>
+      ${t.avisos.slice(0,10).map(esc).join('<br>')}
+      ${t.avisos.length>10?`<br>e mais ${t.avisos.length-10}.`:''}</div>` : ''}`;
 }
 
 function ligarImport(tipo) {
@@ -394,10 +606,17 @@ function relatorioHtml(d) {
 }
 
 /* ============================= clientes =========================== */
+let MARCAS = []; // preenchido em abaClientes/abaMarcas, usado no formulário do cliente
+
 async function abaClientes() {
-  const lista = await api('/api/admin/usuarios');
+  const [lista, marcas] = await Promise.all([
+    api('/api/admin/usuarios'),
+    api('/api/admin/marcas').catch(() => []),
+  ]);
+  MARCAS = marcas;
   const clientes = lista.filter(u => u.perfil === 'cliente');
   const equipe = lista.filter(u => u.perfil !== 'cliente');
+  const nomeMarca = (slug) => (marcas.find(m => m.slug === slug) || {}).nome || slug;
 
   $('aba-clientes').innerHTML = `
     <h1>Clientes e acessos</h1>
@@ -410,12 +629,13 @@ async function abaClientes() {
       </div>
       ${!clientes.length ? '<p style="color:var(--cinza);font-size:13px">Nenhum cliente cadastrado.</p>' : `
       <table><thead><tr>
-        <th>Cliente</th><th>Usuário</th><th>Desconto</th><th>Catálogo</th>
+        <th>Cliente</th><th>Usuário</th><th>Marcas</th><th>Desconto</th><th>Catálogo</th>
         <th>Outlet</th><th>Programado</th><th>Último acesso</th><th></th>
       </tr></thead><tbody>
       ${clientes.map(c => `<tr>
         <td><b>${esc(c.nome)}</b><div style="font-size:11px;color:var(--cinza)">${esc(c.razaoSocial||'')} ${esc(c.cnpj||'')}</div></td>
         <td><span class="senha">${esc(c.usuario)}</span></td>
+        <td style="font-size:12px">${(c.marcasPermitidas||['maxprint']).map(s => esc(nomeMarca(s))).join(', ')}</td>
         <td><b>${(c.desconto*100).toFixed(1)}%</b></td>
         <td><span class="etiq ${c.catalogoStatus==='live'?'faturado':'cancelado'}">${c.catalogoStatus}</span></td>
         <td>${c.verOutlet?'sim':'não'}</td>
@@ -461,6 +681,7 @@ async function abaClientes() {
 function formCliente(c) {
   const novo = !c;
   c = c || { desconto:0, catalogoStatus:'travado', verOutlet:true, permitirProgramado:true };
+  const permitidas = (c.marcasPermitidas && c.marcasPermitidas.length) ? c.marcasPermitidas : ['maxprint'];
   $('janela').innerHTML = `
     <h1>${novo ? 'Novo cliente' : 'Editar cliente'}</h1>
     <p class="sub">O desconto fica só aqui. O cliente vê o preço já com ele aplicado.</p>
@@ -488,6 +709,19 @@ function formCliente(c) {
       <div class="campo"><label>Pode pedir programado</label>
         <select id="c-prog"><option value="sim"${c.permitirProgramado!==false?' selected':''}>Sim</option>
         <option value="nao"${c.permitirProgramado===false?' selected':''}>Não</option></select></div>
+      <div class="campo cheio"><label>Marcas que este cliente enxerga *</label>
+        <div class="marcas-escolha">
+          ${(MARCAS.length ? MARCAS : [{slug:'maxprint',nome:'Maxprint',corPrimaria:'#EB8704'}])
+            .map(m => `<label class="marca-op">
+              <input type="checkbox" class="c-marca" value="${esc(m.slug)}"
+                ${(permitidas.includes(m.slug)) ? 'checked' : ''}>
+              <span class="ponto" style="background:${esc(m.corPrimaria||'#888')}"></span>
+              ${esc(m.nome)}
+            </label>`).join('')}
+        </div>
+        <div style="font-size:11.5px;color:var(--cinza);margin-top:6px">
+          Cada marca vira uma aba no catálogo dele. Sem nenhuma marcada, fica só a Maxprint.</div>
+      </div>
     </div>
     <div id="c-erro" class="aviso erro" style="display:none"></div>
     <div class="solto" style="margin-top:16px;justify-content:flex-end">
@@ -511,6 +745,7 @@ function formCliente(c) {
       catalogoStatus: $('c-status').value,
       verOutlet: $('c-outlet').value === 'sim',
       permitirProgramado: $('c-prog').value === 'sim',
+      marcasPermitidas: [...document.querySelectorAll('.c-marca:checked')].map(i => i.value),
       perfil: 'cliente',
     };
     try {
@@ -541,18 +776,28 @@ function formCliente(c) {
 }
 
 /* ============================= produtos =========================== */
-async function abaProdutos(q = '', semFoto = false) {
-  const lista = await api(`/api/admin/produtos?q=${encodeURIComponent(q)}&semFoto=${semFoto?'sim':'nao'}`);
+async function abaProdutos(q = '', semFoto = false, marca = '') {
+  const [lista, marcas] = await Promise.all([
+    api(`/api/admin/produtos?q=${encodeURIComponent(q)}&semFoto=${semFoto?'sim':'nao'}&marca=${encodeURIComponent(marca)}`),
+    api('/api/admin/marcas').catch(() => []),
+  ]);
+
   $('aba-produtos').innerHTML = `
     <h1>Produtos e fotos</h1>
     <p class="sub">Aqui você confere o que o cliente vê e anexa foto no que o catálogo não ilustra.</p>
     <div class="painel">
       <div class="solto">
-        <div class="campo" style="flex:1"><label>Buscar</label>
-          <input id="p-busca" value="${esc(q)}" placeholder="código, nome ou descrição"></div>
+        <div class="campo" style="flex:1;min-width:180px"><label>Buscar</label>
+          <input id="p-busca" value="${esc(q)}" placeholder="código, nome, cor ou linha"></div>
+        ${marcas.length > 1 ? `<div class="campo"><label>Marca</label>
+          <select id="p-marca">
+            <option value="">Todas</option>
+            ${marcas.map(m => `<option value="${esc(m.slug)}"${marca===m.slug?' selected':''}>${esc(m.nome)}</option>`).join('')}
+          </select></div>` : ''}
         <button class="acao" id="p-todos" style="padding:9px 14px">Todos</button>
         <button class="acao" id="p-semfoto" style="padding:9px 14px">Só sem foto</button>
       </div>
+      <div class="rolagem">
       <table><thead><tr>
         <th>Foto</th><th>Código</th><th>Produto</th><th>Categoria</th>
         <th>Preço tabela</th><th>Estoque</th><th>Status</th><th></th>
@@ -563,6 +808,7 @@ async function abaProdutos(q = '', semFoto = false) {
           : `<div style="width:38px;height:38px;background:var(--claro);border-radius:6px"></div>`}</td>
         <td style="font-size:12px">${esc(p.codigoOriginal||p.codigo)}</td>
         <td style="font-size:12.5px">${esc(p.nome)}
+          ${p.cor?`<div style="font-size:10.5px;color:var(--cinza)">${esc(p.cor)}</div>`:''}
           ${p.imagemIlustrativa && !p.imagemManual ? '<div style="font-size:10.5px;color:var(--cinza)">foto ilustrativa da linha</div>':''}</td>
         <td style="font-size:12px">${esc(p.categoria)}</td>
         <td>${dinheiro(p.precoBase)}</td>
@@ -570,22 +816,129 @@ async function abaProdutos(q = '', semFoto = false) {
           ${p.previstoTotal?`<div style="font-size:11px;color:var(--azul)">+${p.previstoTotal} previsto</div>`:''}</td>
         <td style="font-size:11.5px">${esc(p.status)}</td>
         <td><label class="acao" style="cursor:pointer">Trocar foto
-          <input type="file" accept="image/*" style="display:none" data-foto="${p.codigo}"></label></td>
+          <input type="file" accept="image/*" style="display:none"
+                 data-foto="${p.codigo}" data-marca="${esc(p.marcaSlug||'maxprint')}"></label></td>
       </tr>`).join('')}</tbody></table>
+      </div>
       ${!lista.length?'<p style="color:var(--cinza);font-size:13px">Nada encontrado.</p>':''}
     </div>`;
 
-  $('p-busca').addEventListener('keydown', (e) => { if (e.key==='Enter') abaProdutos(e.target.value, semFoto); });
-  $('p-todos').onclick = () => abaProdutos('', false);
-  $('p-semfoto').onclick = () => abaProdutos('', true);
+  $('p-busca').addEventListener('keydown', (e) => { if (e.key==='Enter') abaProdutos(e.target.value, semFoto, marca); });
+  if ($('p-marca')) $('p-marca').onchange = (e) => abaProdutos(q, semFoto, e.target.value);
+  $('p-todos').onclick = () => abaProdutos('', false, marca);
+  $('p-semfoto').onclick = () => abaProdutos('', true, marca);
   document.querySelectorAll('[data-foto]').forEach(inp => {
     inp.addEventListener('change', async () => {
       if (!inp.files.length) return;
       const fd = new FormData(); fd.append('imagem', inp.files[0]);
-      await api('/api/importacao/foto/' + inp.dataset.foto, { method:'POST', body: fd });
-      abaProdutos(q, semFoto);
+      // A marca vai junto porque o mesmo código pode existir em duas marcas.
+      await api(`/api/importacao/foto/${inp.dataset.foto}?marca=${encodeURIComponent(inp.dataset.marca)}`,
+        { method:'POST', body: fd });
+      abaProdutos(q, semFoto, marca);
     });
   });
+}
+
+/* ============================== marcas ============================ */
+async function abaMarcas() {
+  const marcas = await api('/api/admin/marcas');
+  MARCAS = marcas;
+
+  const condicoesTexto = (lista) => (lista||[]).map(c => c.rotulo).join(', ') || '—';
+
+  $('aba-marcas').innerHTML = `
+    <h1>Marcas</h1>
+    <p class="sub">Cada marca é uma aba no catálogo do cliente, com cor e regra de prazo próprias.</p>
+
+    ${!marcas.length ? `<div class="aviso">Nenhuma marca cadastrada ainda.
+      Rode <span class="senha">node scripts/seed_marcas.js</span> no servidor.</div>` : ''}
+
+    ${marcas.map(m => `
+      <div class="painel">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+          <span class="ponto" style="background:${esc(m.corPrimaria)};width:14px;height:14px"></span>
+          <h2 style="margin:0">${esc(m.nome)}</h2>
+          <span class="etiq ${m.ativa?'faturado':'cancelado'}">${m.ativa?'ativa':'desativada'}</span>
+          <div style="flex:1"></div>
+          <button class="acao" data-editar-marca="${esc(m.slug)}">Editar</button>
+        </div>
+        <p class="d">Endereço interno: <span class="senha">${esc(m.slug)}</span></p>
+        <div class="cartoes" style="margin-bottom:0">
+          <div class="cartao"><div class="r">Pedido mínimo</div>
+            <div class="v" style="font-size:19px">${m.pedidoMinimo===null||m.pedidoMinimo===undefined?'usa o geral':dinheiro(m.pedidoMinimo)}</div></div>
+          <div class="cartao"><div class="r">Frete CIF a partir de</div>
+            <div class="v" style="font-size:19px">${m.valorFreteCif===null||m.valorFreteCif===undefined?'usa o geral':dinheiro(m.valorFreteCif)}</div></div>
+          <div class="cartao"><div class="r">Prazo muda o preço?</div>
+            <div class="v" style="font-size:19px">${m.aplicarAcrescimoPrazo?'sim':'não'}</div></div>
+        </div>
+        <table style="margin-top:12px">
+          <tr><td style="border:0;padding:4px 0;color:var(--cinza)">Condições sempre disponíveis</td>
+              <td style="border:0;padding:4px 0"><b>${esc(condicoesTexto(m.condicoesPagamento))}</b></td></tr>
+          ${m.condicoesAcimaDeValor && m.condicoesAcimaDeValor.valorMinimo > 0 ? `
+          <tr><td style="border:0;padding:4px 0;color:var(--cinza)">Liberadas acima de ${dinheiro(m.condicoesAcimaDeValor.valorMinimo)}</td>
+              <td style="border:0;padding:4px 0"><b>${esc(condicoesTexto(m.condicoesAcimaDeValor.condicoes))}</b></td></tr>` : ''}
+          ${(m.subMarcas||[]).length ? `
+          <tr><td style="border:0;padding:4px 0;color:var(--cinza)">Sub-marcas</td>
+              <td style="border:0;padding:4px 0">${m.subMarcas.map(s =>
+                `<span class="marca-op" style="display:inline-flex;margin:2px 6px 2px 0">
+                   <span class="ponto" style="background:${esc(s.cor)}"></span>${esc(s.nome)}</span>`).join('')}</td></tr>` : ''}
+        </table>
+      </div>`).join('')}`;
+
+  document.querySelectorAll('[data-editar-marca]').forEach(b =>
+    b.onclick = () => formMarca(marcas.find(m => m.slug === b.dataset.editarMarca)));
+}
+
+function formMarca(m) {
+  $('janela').innerHTML = `
+    <h1>Editar ${esc(m.nome)}</h1>
+    <p class="sub">O que não se edita aqui (as condições de pagamento) é ajustado no código, porque mexe na conta do pedido.</p>
+    <div class="campos">
+      <div class="campo"><label>Nome</label><input id="m-nome" value="${esc(m.nome)}"></div>
+      <div class="campo"><label>Ordem da aba</label><input id="m-ordem" type="number" value="${m.ordem||0}"></div>
+      <div class="campo"><label>Cor principal</label>
+        <input id="m-cor1" type="color" value="${esc(m.corPrimaria||'#000000')}" style="height:42px;padding:4px"></div>
+      <div class="campo"><label>Cor secundária</label>
+        <input id="m-cor2" type="color" value="${esc(m.corSecundaria||'#000000')}" style="height:42px;padding:4px"></div>
+      <div class="campo"><label>Pedido mínimo (vazio = usa o geral)</label>
+        <input id="m-min" type="number" step="0.01" value="${m.pedidoMinimo===null||m.pedidoMinimo===undefined?'':m.pedidoMinimo}"></div>
+      <div class="campo"><label>Frete CIF a partir de (vazio = usa o geral)</label>
+        <input id="m-cif" type="number" step="0.01" value="${m.valorFreteCif===null||m.valorFreteCif===undefined?'':m.valorFreteCif}"></div>
+      <div class="campo"><label>Aba visível para clientes</label>
+        <select id="m-ativa"><option value="sim"${m.ativa?' selected':''}>Sim</option>
+        <option value="nao"${!m.ativa?' selected':''}>Não</option></select></div>
+      <div class="campo"><label>E-mails de aviso (vazio = usa os gerais)</label>
+        <input id="m-emails" value="${esc((m.emailsAviso||[]).join(', '))}" placeholder="um, outro"></div>
+    </div>
+    <div id="m-erro" class="aviso erro" style="display:none"></div>
+    <div class="solto" style="margin-top:16px;justify-content:flex-end">
+      <button class="acao" onclick="document.getElementById('tapa').classList.remove('aberto')">Cancelar</button>
+      <button class="primaria" id="m-salvar">Salvar</button>
+    </div>`;
+  $('tapa').classList.add('aberto');
+
+  $('m-salvar').onclick = async () => {
+    // Campo vazio vira null de propósito: é assim que a marca diz "não tenho
+    // regra própria, use a configuração geral do sistema".
+    const numeroOuNulo = (v) => v.trim() === '' ? null : Number(v);
+    try {
+      await api('/api/admin/marcas/' + m.slug, {
+        method:'PATCH', headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          nome: $('m-nome').value.trim(),
+          ordem: Number($('m-ordem').value || 0),
+          corPrimaria: $('m-cor1').value,
+          corSecundaria: $('m-cor2').value,
+          pedidoMinimo: numeroOuNulo($('m-min').value),
+          valorFreteCif: numeroOuNulo($('m-cif').value),
+          ativa: $('m-ativa').value === 'sim',
+          emailsAviso: $('m-emails').value.split(',').map(s => s.trim()).filter(Boolean),
+        }) });
+      fecharJanela(); abaMarcas();
+    } catch (e) {
+      $('m-erro').textContent = e.message; $('m-erro').style.display = 'block';
+    }
+  };
 }
 
 /* ============================ relatórios ========================== */
