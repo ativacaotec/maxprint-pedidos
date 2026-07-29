@@ -9,7 +9,11 @@
   "scripts": {
     "start": "node server.js",
     "create-admin": "node scripts/create_admin.js",
-    "teste": "node scripts/teste_ponta_a_ponta.js"
+    "marcas": "node scripts/seed_marcas.js",
+    "teste": "node scripts/teste_ponta_a_ponta.js",
+    "teste-pedido": "node scripts/conferir_pedido.js",
+    "teste-telas": "node scripts/conferir_telas.js",
+    "teste-local": "node scripts/servidor_de_teste.js"
   },
   "keywords": [],
   "author": "",

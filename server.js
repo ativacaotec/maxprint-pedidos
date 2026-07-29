@@ -2,6 +2,22 @@
 
 require('dotenv').config();
 
+/**
+ * O VPS roda Node 20, que ainda não tem Promise.withResolvers — usado pelo
+ * pdfjs-dist na leitura dos catálogos em PDF. Sem isto, a importação de
+ * catálogo quebra lá e funciona aqui, que é o pior tipo de diferença.
+ *
+ * Foi adicionado direto no servidor em 28/07 e trazido para o código depois,
+ * senão a próxima publicação o apagaria sem ninguém notar.
+ */
+if (typeof Promise.withResolvers !== 'function') {
+  Promise.withResolvers = function withResolvers() {
+    let resolve, reject;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+  };
+}
+
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
@@ -17,8 +33,12 @@ const rotasCatalogo = require('./routes/catalogo');
 const rotasPedidos = require('./routes/pedidos');
 const rotasAdmin = require('./routes/admin');
 const rotasImportacao = require('./routes/importacao');
+const rotasMarcas = require('./routes/marcas');
 
 const PORTA = Number(process.env.PORT || 3001);
+// Escuta só no loopback: quem fala com a internet é o Nginx. Sem isso o
+// aplicativo fica acessível por IP:porta, driblando o HTTPS.
+const HOST = process.env.HOST || '127.0.0.1';
 const MONGO = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/maxprint_pedidos';
 
 const app = express();
@@ -77,6 +97,7 @@ app.use('/api/catalogo', rotasCatalogo);
 app.use('/api/pedidos', rotasPedidos);
 app.use('/api/admin', rotasAdmin);
 app.use('/api/importacao', rotasImportacao);
+app.use('/api/marcas', rotasMarcas);
 
 app.get('/api/saude', (req, res) => {
   res.json({ ok: true, banco: mongoose.connection.readyState === 1, versao: require('./package.json').version });
@@ -97,8 +118,11 @@ app.use((err, req, res, next) => {
 async function iniciar() {
   await mongoose.connect(MONGO);
   await Config.carregar();
-  app.listen(PORTA, () => {
-    console.log(`Pedidos Maxprint no ar em http://localhost:${PORTA}`);
+  // O HOST importa: sem ele o Node escuta em 0.0.0.0 e o sistema passa a
+  // responder direto em IP:3001, driblando o HTTPS do Nginx. Escutando só no
+  // loopback, a única porta de entrada é o Nginx — que é o desenho pretendido.
+  app.listen(PORTA, HOST, () => {
+    console.log(`Pedidos Maxprint no ar em http://${HOST}:${PORTA}`);
   });
 }
 
