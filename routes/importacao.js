@@ -625,6 +625,118 @@ router.post(
 );
 
 /* ------------------------------------------------------------------ *
+ * Buscador de fotos no site da Maxprint
+ *
+ * As fotos da Maxprint vinham do recorte dos catálogos em PDF, e o recorte
+ * errou: 236 dos 422 produtos dividiam foto com outro, incluindo recortes de
+ * seção inteira servindo de foto para 77 e 72 itens ao mesmo tempo. O site da
+ * fábrica publica a foto de cada produto com o CÓDIGO no nome do arquivo, que
+ * é o casamento mais seguro que existe.
+ * ------------------------------------------------------------------ */
+
+const { buscarFotosMaxprint } = require('../lib/buscarFotosMaxprint');
+
+async function rodarBuscaDeFotosMaxprint(id, opcoes) {
+  const MARCA = 'maxprint';
+  let gravadas = 0;
+  const inicio = Date.now();
+  try {
+    marcar(id, { etapa: 'vendo quem está sem foto boa', progresso: 2 });
+
+    // Quem entra na busca: sem foto nenhuma, ou com foto que hoje é dividida
+    // com outro item (o recorte errado do PDF). Foto anexada à mão não entra:
+    // aquela foi conferida por gente.
+    const todos = await Produto.find({ marcaSlug: MARCA, ativo: true })
+      .select('codigo codigoOriginal nome imagem imagemManual').lean();
+
+    const usoDaImagem = new Map();
+    for (const p of todos) {
+      if (!p.imagem || p.imagemManual) continue;
+      usoDaImagem.set(p.imagem, (usoDaImagem.get(p.imagem) || 0) + 1);
+    }
+    const alvo = todos.filter((p) => !p.imagemManual
+      && (!p.imagem || (usoDaImagem.get(p.imagem) || 0) > 1 || opcoes.todos));
+
+    if (!alvo.length) {
+      marcar(id, {
+        estado: 'pronto', etapa: 'nada a fazer', progresso: 100,
+        relatorio: { procurados: 0, fotosBaixadas: 0 },
+        avisos: ['Todos os produtos já têm foto própria.'],
+      });
+      return;
+    }
+
+    const { resultados, relatorio, avisos } = await buscarFotosMaxprint(alvo, {
+      pastaImagens: PASTA_IMAGENS,
+      prefixo: 'maxweb',
+      pausaMs: opcoes.pausaMs,
+      aoAndar: (p) => {
+        const prog = Math.min(92, 5 + Math.round((p.achados / Math.max(1, alvo.length)) * 80));
+        marcar(id, { etapa: p.etapa, progresso: prog });
+      },
+      aoDescartar: async (codigo) => {
+        await Produto.updateOne(
+          { codigo, marcaSlug: MARCA },
+          { $set: { imagem: '', imagemIlustrativa: false, fotoOrigem: '' } }
+        );
+        if (gravadas > 0) gravadas--;
+        marcar(id, { fotosGravadas: gravadas });
+      },
+      aoBaixar: async (r) => {
+        await Produto.updateOne(
+          { codigo: r.codigo, marcaSlug: MARCA },
+          { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } }
+        );
+        gravadas++;
+        marcar(id, { fotosGravadas: gravadas });
+      },
+    });
+
+    marcar(id, { etapa: 'fechando', progresso: 96 });
+    const operacoes = resultados.map((r) => ({
+      updateOne: {
+        filter: { codigo: r.codigo, marcaSlug: MARCA },
+        update: { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } },
+      },
+    }));
+    if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
+
+    const relatorioFinal = {
+      ...relatorio,
+      fotosGravadas: gravadas,
+      aindaSemFoto: await Produto.countDocuments({ marcaSlug: MARCA, ativo: true, imagem: '', imagemManual: '' }),
+    };
+
+    await Importacao.create({
+      tipo: 'catalogo',
+      arquivos: ['(busca de fotos no site da Maxprint)'],
+      usuario: opcoes.usuario,
+      duracaoSegundos: Math.round((Date.now() - inicio) / 1000),
+      relatorio: relatorioFinal,
+      avisos: avisos.slice(0, 200),
+      erro: '',
+    });
+
+    marcar(id, { estado: 'pronto', etapa: 'concluído', progresso: 100, relatorio: relatorioFinal, avisos });
+  } catch (e) {
+    console.error('[busca fotos maxprint]', e);
+    marcar(id, { estado: 'erro', etapa: 'falhou', erro: e.message });
+  }
+}
+
+router.post('/maxprint/fotos', async (req, res) => {
+  const id = novaTarefa();
+  rodarBuscaDeFotosMaxprint(id, {
+    usuario: req.session.usuario.usuario,
+    // Por padrão procura só quem está sem foto ou com foto dividida. Com
+    // `todos`, refaz a foto de todo o catálogo pelo site.
+    todos: String(req.body && req.body.todos || 'nao') === 'sim',
+    pausaMs: Math.max(800, Number(req.body && req.body.pausaMs) || 1200),
+  });
+  res.json({ ok: true, tarefa: id });
+});
+
+/* ------------------------------------------------------------------ *
  * Yin's — o catálogo em PDF É a base
  *
  * Aqui não existe planilha nem HTML da fábrica: código, descrição, custo,
