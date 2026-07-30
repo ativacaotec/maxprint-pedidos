@@ -350,6 +350,15 @@ async function abaImportar() {
 
   const marcas = await api('/api/admin/marcas').catch(() => []);
   const temSamsonite = marcas.some(m => m.slug === 'samsonite');
+
+  // Bases guardadas de cada marca. A regra vale para todas: o arquivo que você
+  // subiu por último continua valendo até você mesmo mandar substituir.
+  const guardada = (marca, tipo) =>
+    ((situacao.basesPorMarca || {})[marca] || []).find(b => b.tipo === tipo) || null;
+  const resumoBase = (marca, tipo, unidade) => {
+    const b = guardada(marca, tipo);
+    return b ? `guardada em ${data(b.atualizadoEm)} · ${b.itens} ${unidade}` : 'nenhuma guardada ainda';
+  };
   const contaMarca = (slug) => (situacao.porMarca || []).find(m => m.marca === slug) || { produtos:0, semFoto:0 };
 
   $('aba-importar').innerHTML = `
@@ -406,14 +415,15 @@ async function abaImportar() {
     <div class="painel">
       <h2>Samsonite</h2>
       <p class="d">Aqui é diferente da Maxprint: preço, saldo e descrição vêm todos do mesmo arquivo HTML.
-         Os catálogos em PDF são opcionais e servem só para trazer a foto de cada cor.</p>
+         Os catálogos em PDF são opcionais e servem só para trazer a foto de cada cor.
+         <b>A base e os PDFs ficam guardados</b> — só troca quando você sobe um arquivo novo.</p>
       <div class="import">
         <div class="caixa-import">
-          <h3>Base da Samsonite (obrigatório)</h3>
+          <h3>Base da Samsonite</h3>
           <p>O arquivo HTML da aplicação antiga. Traz os ~1.500 itens com preço, saldo, cor e promoção.</p>
           <input type="file" id="f-sam-base" accept=".html,.htm,.json">
           <label for="f-sam-base">Escolher HTML</label>
-          <div class="arqs" id="a-sam-base">nenhum escolhido</div>
+          <div class="arqs" id="a-sam-base">${resumoBase('samsonite', 'base', 'itens')}</div>
         </div>
 
         <div class="caixa-import">
@@ -421,18 +431,31 @@ async function abaImportar() {
           <p>De onde saem as fotos por cor. Pode subir os dois (Samsonite/American Tourister e BTS/Xtrem) juntos.</p>
           <input type="file" id="f-sam-pdfs" accept=".pdf" multiple>
           <label for="f-sam-pdfs">Escolher PDFs</label>
-          <div class="arqs" id="a-sam-pdfs">nenhum escolhido</div>
+          <div class="arqs" id="a-sam-pdfs">${resumoBase('samsonite', 'catalogo', 'catálogos')}</div>
         </div>
 
         <div class="caixa-import" style="border-style:solid;background:var(--claro)">
           <h3>Situação hoje</h3>
           <p>${contaMarca('samsonite').produtos} produtos ativos ·
              ${contaMarca('samsonite').semFoto} sem foto</p>
-          <button class="primaria" id="b-sam-importar" disabled>Importar Samsonite</button>
+          <button class="primaria" id="b-sam-importar"${guardada('samsonite','base') ? '' : ' disabled'}>Importar Samsonite</button>
           <div class="arqs">A leitura dos PDFs leva alguns minutos.</div>
         </div>
       </div>
       <div id="resultado-sam"></div>
+
+      ${!guardada('samsonite', 'base') ? '' : `
+      <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
+      <h2 style="font-size:14px">Refazer o catálogo da Samsonite</h2>
+      <p class="d">Sem subir arquivo nenhum: usa a base guardada
+         (${resumoBase('samsonite', 'base', 'itens')}), as fotos dos catálogos guardados
+         e reaplica o saldo da última planilha de estoque
+         (${resumoBase('samsonite', 'estoque', 'itens')}).
+         As fotos que já estão no banco continuam onde estão.</p>
+      <div class="solto">
+        <button class="primaria" id="b-sam-recruzar">Refazer catálogo</button>
+      </div>
+      <div id="resultado-sam-recruzar"></div>`}
 
       <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
       <h2 style="font-size:14px">Estoque da Samsonite</h2>
@@ -446,7 +469,7 @@ async function abaImportar() {
           <p>Duas abas (Representantes e BTS). Leva alguns segundos.</p>
           <input type="file" id="f-sam-estoque" accept=".xlsx,.xls" multiple>
           <label for="f-sam-estoque">Escolher planilha</label>
-          <div class="arqs" id="a-sam-estoque">nenhuma escolhida</div>
+          <div class="arqs" id="a-sam-estoque">${resumoBase('samsonite', 'estoque', 'itens')}</div>
         </div>
       </div>
       <div id="resultado-sam-estoque"></div>
@@ -503,7 +526,10 @@ async function abaImportar() {
   ligarImport('estoque');
   ligarImport('preco');
   ligarRecruzar();
-  if (temSamsonite) { ligarImportSamsonite(); ligarEstoqueSamsonite(); ligarBuscaDeFotos(); ligarRevisarFotos(); }
+  if (temSamsonite) {
+    ligarImportSamsonite(); ligarRecruzarSamsonite(); ligarEstoqueSamsonite();
+    ligarBuscaDeFotos(); ligarRevisarFotos();
+  }
 }
 
 /**
@@ -723,18 +749,23 @@ function relatorioEstoqueSamsoniteHtml(d) {
  */
 function ligarImportSamsonite() {
   const base = $('f-sam-base'), pdfs = $('f-sam-pdfs'), botao = $('b-sam-importar');
+  const rotuloBase = $('a-sam-base').textContent;
+  const rotuloPdfs = $('a-sam-pdfs').textContent;
+  // Com base guardada, o arquivo deixa de ser obrigatório: subir de novo passa
+  // a ser escolha ("quero substituir"), não exigência para poder importar.
+  const temGuardada = /guardada em/.test(rotuloBase);
 
   const conferir = () => {
-    $('a-sam-base').textContent = base.files.length ? base.files[0].name : 'nenhum escolhido';
-    $('a-sam-pdfs').textContent = pdfs.files.length ? pdfs.files.length + ' PDF(s)' : 'nenhum escolhido';
-    botao.disabled = !base.files.length;
+    $('a-sam-base').textContent = base.files.length ? base.files[0].name + ' (vai substituir)' : rotuloBase;
+    $('a-sam-pdfs').textContent = pdfs.files.length ? pdfs.files.length + ' PDF(s) (vão substituir)' : rotuloPdfs;
+    botao.disabled = !base.files.length && !temGuardada;
   };
   base.addEventListener('change', conferir);
   pdfs.addEventListener('change', conferir);
 
   botao.onclick = async () => {
     const fd = new FormData();
-    fd.append('base', base.files[0]);
+    if (base.files.length) fd.append('base', base.files[0]);
     for (const f of pdfs.files) fd.append('pdfs', f);
 
     botao.disabled = true;
@@ -751,12 +782,32 @@ function ligarImportSamsonite() {
 }
 
 /**
+ * Refaz o catálogo da Samsonite com o que já está guardado. Mesma tarefa em
+ * segundo plano da importação, e por isso o mesmo acompanhamento.
+ */
+function ligarRecruzarSamsonite() {
+  const botao = $('b-sam-recruzar');
+  if (!botao) return;
+  botao.onclick = async () => {
+    botao.disabled = true;
+    $('resultado-sam-recruzar').innerHTML = '<div class="aviso">Refazendo o catálogo com as bases guardadas...</div>';
+    try {
+      const { tarefa } = await api('/api/importacao/samsonite/recruzar', { method: 'POST' });
+      acompanharSamsonite(tarefa, 'resultado-sam-recruzar', botao);
+    } catch (e) {
+      $('resultado-sam-recruzar').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      botao.disabled = false;
+    }
+  };
+}
+
+/**
  * A importação roda no servidor em segundo plano; aqui só pergunto de tempos
  * em tempos como está. Sem isso a conexão morreria no meio da leitura dos
  * PDFs, que passa de vários minutos.
  */
-async function acompanharSamsonite(id) {
-  const alvo = $('resultado-sam');
+async function acompanharSamsonite(id, ondeEscrever, botaoDeVolta) {
+  const alvo = $(ondeEscrever || 'resultado-sam');
   if (!alvo) return; // o admin trocou de aba, não tem mais onde escrever
 
   let t;
@@ -776,13 +827,13 @@ async function acompanharSamsonite(id) {
       <div style="font-size:11.5px;color:var(--cinza);margin-top:6px">
         Pode sair desta tela; a importação continua no servidor.</div>
     </div>`;
-    setTimeout(() => acompanharSamsonite(id), 3000);
+    setTimeout(() => acompanharSamsonite(id, ondeEscrever, botaoDeVolta), 3000);
     return;
   }
 
   if (t.estado === 'erro') {
     alvo.innerHTML = `<div class="aviso erro"><b>A importação falhou.</b><br>${esc(t.erro)}</div>`;
-    const b = $('b-sam-importar'); if (b) b.disabled = false;
+    const b = botaoDeVolta || $('b-sam-importar'); if (b) b.disabled = false;
     return;
   }
 
