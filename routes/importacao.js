@@ -34,10 +34,10 @@ const upload = multer({
 
 async function recruzar() {
   const [preco, estoque, catalogo, modelos] = await Promise.all([
-    Base.findOne({ tipo: 'preco' }).lean(),
-    Base.findOne({ tipo: 'estoque' }).lean(),
-    Base.findOne({ tipo: 'catalogo' }).lean(),
-    Base.findOne({ tipo: 'catalogoModelos' }).lean(),
+    Base.findOne({ marcaSlug: 'maxprint', tipo: 'preco' }).lean(),
+    Base.findOne({ marcaSlug: 'maxprint', tipo: 'estoque' }).lean(),
+    Base.findOne({ marcaSlug: 'maxprint', tipo: 'catalogo' }).lean(),
+    Base.findOne({ marcaSlug: 'maxprint', tipo: 'catalogoModelos' }).lean(),
   ]);
 
   const { produtos, relatorio } = cruzar({
@@ -137,8 +137,8 @@ router.post('/catalogo', upload.array('arquivos', 12), async (req, res) => {
       return res.status(400).json({ erro: 'Escolha pelo menos um PDF.' });
     }
 
-    const anterior = await Base.findOne({ tipo: 'catalogo' }).lean();
-    const anteriorModelos = await Base.findOne({ tipo: 'catalogoModelos' }).lean();
+    const anterior = await Base.findOne({ marcaSlug: 'maxprint', tipo: 'catalogo' }).lean();
+    const anteriorModelos = await Base.findOne({ marcaSlug: 'maxprint', tipo: 'catalogoModelos' }).lean();
     const acumular = String(req.body.acumular || 'sim') === 'sim';
 
     const fichas = acumular ? [...(anterior?.itens || [])] : [];
@@ -174,13 +174,13 @@ router.post('/catalogo', upload.array('arquivos', 12), async (req, res) => {
     }
 
     await Base.findOneAndUpdate(
-      { tipo: 'catalogo' },
-      { tipo: 'catalogo', itens: fichas, origem, atualizadoEm: new Date() },
+      { marcaSlug: 'maxprint', tipo: 'catalogo' },
+      { marcaSlug: 'maxprint', tipo: 'catalogo', itens: fichas, origem, atualizadoEm: new Date() },
       { upsert: true }
     );
     await Base.findOneAndUpdate(
-      { tipo: 'catalogoModelos' },
-      { tipo: 'catalogoModelos', itens: fichasModelo, atualizadoEm: new Date() },
+      { marcaSlug: 'maxprint', tipo: 'catalogoModelos' },
+      { marcaSlug: 'maxprint', tipo: 'catalogoModelos', itens: fichasModelo, atualizadoEm: new Date() },
       { upsert: true }
     );
 
@@ -226,8 +226,9 @@ router.post('/estoque', upload.array('arquivos', 12), async (req, res) => {
     }
 
     await Base.findOneAndUpdate(
-      { tipo: 'estoque' },
+      { marcaSlug: 'maxprint', tipo: 'estoque' },
       {
+        marcaSlug: 'maxprint',
         tipo: 'estoque',
         itens: junto.itens,
         origem: resultados.map((r, i) => ({
@@ -300,8 +301,8 @@ router.post('/preco', upload.array('arquivos', 4), async (req, res) => {
     }
 
     await Base.findOneAndUpdate(
-      { tipo: 'preco' },
-      { tipo: 'preco', itens: [...mapa.values()], origem: porArquivo, atualizadoEm: new Date() },
+      { marcaSlug: 'maxprint', tipo: 'preco' },
+      { marcaSlug: 'maxprint', tipo: 'preco', itens: [...mapa.values()], origem: porArquivo, atualizadoEm: new Date() },
       { upsert: true }
     );
 
@@ -399,20 +400,60 @@ function marcar(id, campos) {
   if (t) Object.assign(t, campos);
 }
 
+/**
+ * Importa (ou refaz) o catálogo da Samsonite.
+ *
+ * A BASE E OS PDFs FICAM GUARDADOS, e é isso que muda em relação ao que havia
+ * antes. Regra que o Marcelo pediu para valer em toda marca: o que ele subiu
+ * por último continua valendo até ele mandar substituir. Então:
+ *
+ *   - subiu base nova   → lê, grava como a base guardada e usa;
+ *   - não subiu base    → usa a guardada, sem pedir arquivo nenhum;
+ *   - subiu PDFs        → leem, substituem os guardados e valem;
+ *   - não subiu PDFs    → valem os guardados.
+ *
+ * Com isso, "refazer o catálogo" vira um botão, e não uma reimportação. As
+ * fotos, essas, vivem no banco por código e não dependem de arquivo nenhum.
+ */
 async function rodarImportacaoSamsonite(id, arquivos, opcoes) {
   const MARCA = 'samsonite';
   try {
     const base = arquivos.base;
-    marcar(id, { etapa: 'lendo a base da Samsonite', progresso: 5 });
+    let produtos;
+    let relBase;
+    let avisos = [];
+    let origemBase = [];
 
-    const { produtos, relatorio: relBase, avisos } = await importarSamsonite(base.path, {
-      pastaImagens: PASTA_IMAGENS,
-      prefixo: `sam${Date.now().toString(36)}`,
-    });
+    if (base) {
+      marcar(id, { etapa: 'lendo a base da Samsonite', progresso: 5 });
+      const r = await importarSamsonite(base.path, {
+        pastaImagens: PASTA_IMAGENS,
+        prefixo: `sam${Date.now().toString(36)}`,
+      });
+      produtos = r.produtos;
+      relBase = r.relatorio;
+      avisos = r.avisos || [];
+      origemBase = [{ arquivo: base.originalname, produtos: produtos.length }];
+      await Base.findOneAndUpdate(
+        { marcaSlug: MARCA, tipo: 'base' },
+        { marcaSlug: MARCA, tipo: 'base', itens: produtos, origem: origemBase, atualizadoEm: new Date() },
+        { upsert: true }
+      );
+    } else {
+      marcar(id, { etapa: 'usando a base guardada da Samsonite', progresso: 5 });
+      const guardada = await Base.findOne({ marcaSlug: MARCA, tipo: 'base' }).lean();
+      if (!guardada || !(guardada.itens || []).length) {
+        throw new Error('Não há base da Samsonite guardada. Suba o arquivo da base uma vez.');
+      }
+      produtos = guardada.itens;
+      origemBase = guardada.origem || [];
+      relBase = { totalValido: produtos.length, deBaseGuardada: true };
+      avisos.push(`Base guardada de ${new Date(guardada.atualizadoEm).toLocaleString('pt-BR')}.`);
+    }
 
     // Fotos por cor: cada PDF é uma passada demorada, então informo o
     // andamento a cada arquivo em vez de deixar a tela parada.
-    const catalogos = [];
+    let catalogos = [];
     const pdfs = arquivos.pdfs || [];
     for (const [i, f] of pdfs.entries()) {
       marcar(id, {
@@ -425,6 +466,28 @@ async function rodarImportacaoSamsonite(id, arquivos, opcoes) {
       });
       catalogos.push(r);
       avisos.push(...(r.avisos || []).map((a) => `${f.originalname}: ${a}`));
+    }
+
+    if (pdfs.length) {
+      await Base.findOneAndUpdate(
+        { marcaSlug: MARCA, tipo: 'catalogo' },
+        {
+          marcaSlug: MARCA,
+          tipo: 'catalogo',
+          itens: catalogos,
+          origem: pdfs.map((f) => ({ arquivo: f.originalname })),
+          atualizadoEm: new Date(),
+        },
+        { upsert: true }
+      );
+    } else {
+      // Sem PDF novo, valem as fichas guardadas. As imagens já estão no disco
+      // desde a leitura original, então nada precisa ser extraído de novo.
+      const guardado = await Base.findOne({ marcaSlug: MARCA, tipo: 'catalogo' }).lean();
+      if (guardado && (guardado.itens || []).length) {
+        catalogos = guardado.itens;
+        avisos.push(`Fotos dos catálogos guardados em ${new Date(guardado.atualizadoEm).toLocaleString('pt-BR')}.`);
+      }
     }
 
     let relCruz = null;
@@ -480,16 +543,32 @@ async function rodarImportacaoSamsonite(id, arquivos, opcoes) {
     const vivos = produtos.map((p) => p.codigo);
     await Produto.updateMany({ marcaSlug: MARCA, codigo: { $nin: vivos } }, { $set: { ativo: false } });
 
+    // O saldo da última planilha de sortimento volta por cima da base.
+    //
+    // A base carrega o estoque do dia em que ela foi gerada. Sem isto,
+    // remontar o catálogo devolveria saldo velho e apagaria a atualização de
+    // estoque mais recente — o cliente veria peça que já saiu.
+    let relEstoque = null;
+    const estoqueGuardado = await Base.findOne({ marcaSlug: MARCA, tipo: 'estoque' }).lean();
+    if (estoqueGuardado && (estoqueGuardado.itens || []).length) {
+      marcar(id, { etapa: 'reaplicando o saldo da última planilha de estoque', progresso: 95 });
+      relEstoque = await aplicarEstoqueSamsonite(estoqueGuardado.itens);
+      avisos.push(`Saldo da planilha de estoque de ${new Date(estoqueGuardado.atualizadoEm).toLocaleString('pt-BR')} reaplicado.`);
+    }
+
     const relatorio = {
       ...relBase,
       cruzamentoFotos: relCruz,
+      estoqueReaplicado: relEstoque,
       fotosPreservadas,
       desativados: await Produto.countDocuments({ marcaSlug: MARCA, ativo: false }),
     };
 
     await Importacao.create({
       tipo: 'samsonite',
-      arquivos: [base.originalname, ...pdfs.map((f) => f.originalname)],
+      arquivos: base
+        ? [base.originalname, ...pdfs.map((f) => f.originalname)]
+        : ['(bases guardadas)', ...pdfs.map((f) => f.originalname)],
       usuario: opcoes.usuario,
       duracaoSegundos: Math.round((Date.now() - opcoes.inicio) / 1000),
       relatorio,
@@ -522,9 +601,16 @@ router.post(
     const base = (req.files && req.files.base && req.files.base[0]) || null;
     const pdfs = (req.files && req.files.pdfs) || [];
 
+    // Sem base nova, vale a guardada — desde que exista. Só na primeira vez o
+    // arquivo é obrigatório; daí em diante subir de novo é escolha, não regra.
     if (!base) {
-      limpar(pdfs);
-      return res.status(400).json({ erro: 'Escolha o arquivo HTML da base da Samsonite.' });
+      const guardada = await Base.findOne({ marcaSlug: 'samsonite', tipo: 'base' }).select('_id').lean();
+      if (!guardada) {
+        limpar(pdfs);
+        return res.status(400).json({
+          erro: 'Ainda não há base da Samsonite guardada. Escolha o arquivo HTML da base nesta primeira vez.',
+        });
+      }
     }
 
     const id = novaTarefa();
@@ -538,6 +624,29 @@ router.post(
   }
 );
 
+/**
+ * Refaz o catálogo da Samsonite com a base e os PDFs que já estão guardados.
+ *
+ * Mesma ideia do botão da Maxprint: nenhuma planilha é pedida, nada é
+ * substituído. Serve para quando o catálogo precisa ser remontado — depois de
+ * uma faxina de fotos, de um ajuste no cruzamento, ou simplesmente porque
+ * alguma coisa saiu torta e reimportar seria caro.
+ */
+router.post('/samsonite/recruzar', async (req, res) => {
+  const guardada = await Base.findOne({ marcaSlug: 'samsonite', tipo: 'base' }).select('_id').lean();
+  if (!guardada) {
+    return res.status(400).json({
+      erro: 'Não há base da Samsonite guardada ainda. Suba o arquivo da base uma vez e o botão passa a funcionar.',
+    });
+  }
+  const id = novaTarefa();
+  rodarImportacaoSamsonite(id, { base: null, pdfs: [] }, {
+    usuario: req.session.usuario.usuario,
+    inicio: Date.now(),
+  });
+  res.json({ ok: true, tarefa: id });
+});
+
 /* ------------------------------------------------------------------ *
  * Estoque da Samsonite (planilha "Sortimento Produtos Wholesale")
  *
@@ -547,24 +656,17 @@ router.post(
 
 const { importarEstoqueSamsonite } = require('../lib/importEstoqueSamsonite');
 
-router.post('/samsonite/estoque', upload.array('arquivos', 4), async (req, res) => {
-  const inicio = Date.now();
+/**
+ * Aplica no catálogo os itens da planilha de sortimento da Samsonite.
+ *
+ * Está numa função à parte porque roda em dois momentos: quando a planilha
+ * chega, e de novo quando o catálogo é remontado a partir da base guardada —
+ * senão o "refazer catálogo" devolveria os saldos velhos da base, apagando a
+ * atualização de estoque mais recente sem ninguém pedir.
+ */
+async function aplicarEstoqueSamsonite(itens) {
   const MARCA = 'samsonite';
-  try {
-    if (!req.files || !req.files.length) {
-      return res.status(400).json({ erro: 'Escolha a planilha de estoque da Samsonite.' });
-    }
-
-    const itens = [];
-    const avisos = [];
-    let relatorioBase = {};
-    for (const f of req.files) {
-      const r = importarEstoqueSamsonite(f.path);
-      itens.push(...r.itens);
-      avisos.push(...r.avisos.map((a) => `${f.originalname}: ${a}`));
-      relatorioBase = r.relatorio;
-    }
-
+  {
     // Quem já está no catálogo, e em que condição. Preciso saber de duas
     // coisas antes de gravar: se o item existe e se ele está em promoção.
     const existentes = await Produto.find({ marcaSlug: MARCA })
@@ -660,8 +762,7 @@ router.post('/samsonite/estoque', upload.array('arquivos', 4), async (req, res) 
     }
     if (opCores.length) await Produto.bulkWrite(opCores, { ordered: false });
 
-    const relatorio = {
-      ...relatorioBase,
+    return {
       atualizados,
       criados,
       promoPreservada,
@@ -669,6 +770,41 @@ router.post('/samsonite/estoque', upload.array('arquivos', 4), async (req, res) 
       gruposDeCor,
       totalNoCatalogo: await Produto.countDocuments({ marcaSlug: MARCA, ativo: true }),
     };
+  }
+}
+
+router.post('/samsonite/estoque', upload.array('arquivos', 4), async (req, res) => {
+  const inicio = Date.now();
+  try {
+    if (!req.files || !req.files.length) {
+      return res.status(400).json({ erro: 'Escolha a planilha de estoque da Samsonite.' });
+    }
+
+    const itens = [];
+    const avisos = [];
+    let relatorioBase = {};
+    for (const f of req.files) {
+      const r = importarEstoqueSamsonite(f.path);
+      itens.push(...r.itens);
+      avisos.push(...r.avisos.map((a) => `${f.originalname}: ${a}`));
+      relatorioBase = r.relatorio;
+    }
+
+    // A planilha fica guardada, como toda base: é ela que devolve o saldo
+    // certo quando o catálogo é remontado sem reimportar nada.
+    await Base.findOneAndUpdate(
+      { marcaSlug: 'samsonite', tipo: 'estoque' },
+      {
+        marcaSlug: 'samsonite',
+        tipo: 'estoque',
+        itens,
+        origem: req.files.map((f) => ({ arquivo: f.originalname })),
+        atualizadoEm: new Date(),
+      },
+      { upsert: true }
+    );
+
+    const relatorio = { ...relatorioBase, ...(await aplicarEstoqueSamsonite(itens)) };
 
     await Importacao.create({
       tipo: 'samsonite',
@@ -922,8 +1058,8 @@ router.post('/recruzar', async (req, res) => {
   const inicio = Date.now();
   try {
     const [preco, estoque] = await Promise.all([
-      Base.findOne({ tipo: 'preco' }).select('itens').lean(),
-      Base.findOne({ tipo: 'estoque' }).select('itens').lean(),
+      Base.findOne({ marcaSlug: 'maxprint', tipo: 'preco' }).select('itens').lean(),
+      Base.findOne({ marcaSlug: 'maxprint', tipo: 'estoque' }).select('itens').lean(),
     ]);
     const nPreco = (preco?.itens || []).length;
     const nEstoque = (estoque?.itens || []).length;
@@ -957,10 +1093,24 @@ router.get('/historico', async (req, res) => {
 });
 
 router.get('/situacao', async (req, res) => {
-  const bases = await Base.find().select('tipo origem atualizadoEm').lean();
+  const guardadas = await Base.find().select('marcaSlug tipo origem atualizadoEm itens').lean();
+  // `bases` e `contagem` continuam existindo com o formato antigo (a aba da
+  // Maxprint do painel lê deles). `basesPorMarca` é o formato novo, que a
+  // Samsonite e a próxima marca usam.
+  const bases = guardadas
+    .filter((b) => (b.marcaSlug || 'maxprint') === 'maxprint')
+    .map(({ itens, ...resto }) => resto);
   const contagem = {};
-  for (const b of await Base.find().select('tipo itens').lean()) {
-    contagem[b.tipo] = (b.itens || []).length;
+  const basesPorMarca = {};
+  for (const b of guardadas) {
+    const marca = b.marcaSlug || 'maxprint';
+    if (marca === 'maxprint') contagem[b.tipo] = (b.itens || []).length;
+    (basesPorMarca[marca] = basesPorMarca[marca] || []).push({
+      tipo: b.tipo,
+      itens: (b.itens || []).length,
+      origem: b.origem || [],
+      atualizadoEm: b.atualizadoEm,
+    });
   }
   // Por marca, para o painel conseguir mostrar cada aba separada.
   const porMarca = await Produto.aggregate([
@@ -979,6 +1129,7 @@ router.get('/situacao', async (req, res) => {
   res.json({
     bases,
     contagem,
+    basesPorMarca,
     produtos,
     semFoto,
     porMarca: porMarca.map((m) => ({ marca: m._id || 'maxprint', produtos: m.produtos, semFoto: m.semFoto })),
