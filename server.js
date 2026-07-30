@@ -122,7 +122,7 @@ async function iniciar() {
   // responder direto em IP:3001, driblando o HTTPS do Nginx. Escutando só no
   // loopback, a única porta de entrada é o Nginx — que é o desenho pretendido.
   app.listen(PORTA, HOST, () => {
-    console.log(`Pedidos Maxprint no ar em http://${HOST}:${PORTA}`);
+    console.log(`Catálogos Ativação no ar em http://${HOST}:${PORTA}`);
   });
 }
 
