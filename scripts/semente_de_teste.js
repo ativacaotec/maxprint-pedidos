@@ -53,6 +53,9 @@ async function semear() {
     ['70000120', 'MOUSE SEM FIO M110 CINZA', 'Periféricos', 44.06, 80, ['70000119', '70000120']],
     ['65000006', 'FONE TWS BLUETOOTH COM ANC FBT PRETO', 'Áudio', 251.09, 30, []],
     ['74000009', 'TECLADO MULTIMÍDIA SLIM', 'Periféricos', 89.9, 0, []],
+    // A linha Logitech vem dentro da base da Maxprint. Está aqui para o teste
+    // do filtro de fabricante ter o que separar.
+    ['920004423', 'TECLADO COM FIO USB LOGITECH K120 CINZA', 'LOGITECH', 129.9, 40, []],
   ];
   for (const [codigo, nome, categoria, preco, estoque, grupo] of maxprint) {
     await Produto.create({

@@ -291,6 +291,43 @@ async function entrar(pagina, usuario, senha) {
     const semFiltro = await c.$$eval('.card .selo.sem', (e) => e.length);
     conferir('desligando o filtro, o item sem estoque volta', semFiltro > 0);
 
+    // --- separar a linha Logitech da Maxprint, marcando um, o outro ou os dois ---
+    // A base da Maxprint carrega a Logitech junto. O filtro é de múltipla
+    // escolha: marcar os dois tem que dar o mesmo resultado de não marcar nada.
+    await c.click('.abas-marca button[data-marca="maxprint"]');
+    await c.waitForTimeout(1400);
+
+    const chips = await c.$$eval('#f-fabricante .chip-fab', (e) => e.map((x) => x.textContent.trim()));
+    conferir('a Maxprint mostra o filtro de fabricante com os dois nomes',
+      chips.length === 2 && chips.some((t) => /^Maxprint/.test(t)) && chips.some((t) => /^Logitech/.test(t)),
+      JSON.stringify(chips));
+
+    const nomesNaGrade = () => c.$$eval('.card .nome', (e) => e.map((x) => x.textContent.trim()));
+    const todosOsNomes = await nomesNaGrade();
+
+    await c.click('#f-fabricante .chip-fab[data-fab="Logitech"]');
+    await c.waitForTimeout(800);
+    const soLogitech = await nomesNaGrade();
+    conferir('marcando Logitech, a grade fica só com a Logitech',
+      soLogitech.length > 0 && soLogitech.every((n) => /LOGITECH/i.test(n)),
+      JSON.stringify(soLogitech));
+
+    const menuComLogitech = await c.$$eval('#menu a', (e) => e.map((x) => x.textContent.trim()));
+    conferir('e o menu esconde as categorias que ficaram vazias',
+      !menuComLogitech.some((t) => /Periféricos|Áudio/.test(t)), JSON.stringify(menuComLogitech));
+
+    await c.click('#f-fabricante .chip-fab[data-fab="Maxprint"]');
+    await c.waitForTimeout(800);
+    const osDois = await nomesNaGrade();
+    conferir('marcando os dois, volta o catálogo inteiro',
+      osDois.length === todosOsNomes.length, `${osDois.length} de ${todosOsNomes.length}`);
+    conferir('e os chips voltam a ficar apagados',
+      (await c.$$eval('#f-fabricante .chip-fab.ativo', (e) => e.length)) === 0);
+    await foto(c, '17-filtro-fabricante');
+
+    await c.click('.abas-marca button[data-marca="samsonite"]');
+    await c.waitForTimeout(1400);
+
     // --- anexar foto: opção só para a equipe, não para o cliente ---
     const botaoFotoCliente = await c.$$eval('.subir-foto', (e) => e.length);
     conferir('cliente não vê a opção de anexar foto', botaoFotoCliente === 0);
