@@ -328,6 +328,65 @@ async function entrar(pagina, usuario, senha) {
     await c.click('.abas-marca button[data-marca="samsonite"]');
     await c.waitForTimeout(1400);
 
+    // --- busca por código, nome e cor, dentro do catálogo de cada marca ---
+    // O que isto guarda: procurar o código de UMA cor mostrava o card inteiro
+    // aberto na primeira cor da linha, e quem procurou achava que tinha achado
+    // outro item. E procurar com uma categoria aberta no menu não achava nada
+    // que estivesse fora dela, sem explicar por quê.
+    const buscar = async (texto) => {
+      await c.fill('#busca', texto);
+      await c.waitForTimeout(700);
+      return c.evaluate(() => ({
+        cards: [...document.querySelectorAll('.card .nome')].map((e) => e.textContent.trim()),
+        cores: [...document.querySelectorAll('.card')].map((el) => el.querySelectorAll('.cores .cor').length),
+        titulo: (document.getElementById('titulo') || {}).textContent,
+      }));
+    };
+
+    const porCor = await buscar('146203D1102');
+    conferir('procurar o código de uma cor traz só aquela cor',
+      porCor.cards.length === 1 && porCor.cores[0] <= 1,
+      `${porCor.cards.length} cards, ${porCor.cores[0]} cores`);
+    conferir('e o título diz que é uma busca', /Busca:/.test(porCor.titulo || ''), JSON.stringify(porCor.titulo));
+
+    const porNome = await buscar('bahia');
+    conferir('procurar pelo nome da linha traz o card com as cores',
+      porNome.cards.length === 1 && porNome.cores[0] === 3,
+      `${porNome.cards.length} cards, ${porNome.cores[0]} cores`);
+
+    const porCorNome = await buscar('navy');
+    conferir('procurar pelo nome da cor acha o item',
+      porCorNome.cards.length === 1, `${porCorNome.cards.length} cards`);
+
+    // Ordem invertida de propósito: "exp aspen" tem que dar o mesmo que
+    // "aspen exp". E a BAHIA, que também é EXP, fica de fora porque não é
+    // Aspen — as duas palavras valem juntas, não uma ou outra.
+    const duasPalavras = await buscar('exp aspen');
+    conferir('duas palavras filtram juntas, em qualquer ordem',
+      duasPalavras.cards.length === 2 && duasPalavras.cards.every((n) => /ASPEN/.test(n)),
+      JSON.stringify(duasPalavras.cards));
+
+    // com uma categoria aberta, a busca tem que sair dela
+    await c.fill('#busca', '');
+    await c.waitForTimeout(500);
+    await c.evaluate(() => {
+      const a = [...document.querySelectorAll('#menu a')].find((x) => /Xtrem/.test(x.textContent));
+      if (a) a.click();
+    });
+    await c.waitForTimeout(700);
+    const foraDaCategoria = await buscar('aspen');
+    conferir('com categoria aberta, a busca procura no catálogo inteiro',
+      foraDaCategoria.cards.length >= 2, `${foraDaCategoria.cards.length} cards`);
+    await foto(c, '18-busca');
+
+    await c.fill('#busca', '');
+    await c.waitForTimeout(600);
+    await c.evaluate(() => {
+      const a = [...document.querySelectorAll('#menu a')].find((x) => /Todos os produtos/.test(x.textContent));
+      if (a) a.click();
+    });
+    await c.waitForTimeout(700);
+
     // --- anexar foto: opção só para a equipe, não para o cliente ---
     const botaoFotoCliente = await c.$$eval('.subir-foto', (e) => e.length);
     conferir('cliente não vê a opção de anexar foto', botaoFotoCliente === 0);
