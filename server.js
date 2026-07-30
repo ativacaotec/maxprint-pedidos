@@ -115,8 +115,43 @@ app.use((err, req, res, next) => {
 
 /* ----------------------------- partida ----------------------------- */
 
+/**
+ * As bases guardadas passaram a ser POR MARCA.
+ *
+ * O índice antigo era único só no `tipo`, de quando só a Maxprint guardava
+ * base. Com a Samsonite guardando a dela (e a Yins a caminho), esse índice
+ * recusaria a segunda marca com erro de chave duplicada — e a importação
+ * falharia sem motivo visível. Aqui o índice velho sai, os documentos que
+ * ficaram sem marca são adotados pela Maxprint (eram todos dela) e o índice
+ * novo, (marcaSlug, tipo), entra.
+ *
+ * Roda toda vez que o servidor sobe e não faz nada depois da primeira.
+ */
+async function ajustarBasesPorMarca() {
+  // Só faz sentido com banco de verdade do outro lado. No servidor de teste o
+  // mongoose está de mentira e não existe `db`: chamar a coleção crua ali
+  // deixaria o comando na fila para sempre, e o servidor nunca subiria.
+  const db = mongoose.connection && mongoose.connection.db;
+  if (!db) return;
+
+  const col = db.collection('bases');
+  try {
+    const indices = await col.indexes();
+    if (indices.some((i) => i.name === 'tipo_1')) await col.dropIndex('tipo_1');
+  } catch (e) {
+    console.warn('[bases] não consegui conferir os índices:', e.message);
+  }
+  try {
+    await col.updateMany({ marcaSlug: { $in: [null, ''] } }, { $set: { marcaSlug: 'maxprint' } });
+    await col.createIndex({ marcaSlug: 1, tipo: 1 }, { unique: true });
+  } catch (e) {
+    console.warn('[bases] não consegui ajustar por marca:', e.message);
+  }
+}
+
 async function iniciar() {
   await mongoose.connect(MONGO);
+  await ajustarBasesPorMarca();
   await Config.carregar();
   // O HOST importa: sem ele o Node escuta em 0.0.0.0 e o sistema passa a
   // responder direto em IP:3001, driblando o HTTPS do Nginx. Escutando só no
