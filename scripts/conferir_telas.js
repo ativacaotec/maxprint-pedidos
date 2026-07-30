@@ -67,7 +67,7 @@ async function entrar(pagina, usuario, senha) {
     await esperarNoAr();
     console.log('Servidor de teste no ar.\n');
 
-    const navegador = await chromium.launch();
+    const navegador = await chromium.launch({ executablePath: process.env.CHROME_BIN || undefined });
 
     /* =================== painel do admin, em desktop =================== */
     const ctx = await navegador.newContext({ viewport: { width: 1400, height: 1000 } });
@@ -246,6 +246,54 @@ async function entrar(pagina, usuario, senha) {
       conferir('e com a foto esmaecida', zerado.esmaecido);
       await foto(c, '15-sem-estoque');
     }
+
+    // --- "só com saldo" precisa esconder a COR sem saldo, não só o card ---
+    // O erro que isto guarda: o filtro olhava se ALGUMA cor da linha tinha
+    // saldo e deixava o card passar inteiro, abrindo na primeira cor — que
+    // muitas vezes está zerada. Dava filtro ligado com "SEM ESTOQUE" na tela.
+    await c.fill(BAHIA, '0');
+    await c.waitForTimeout(600);
+    await c.click('#chip-disponivel');
+    await c.waitForTimeout(900);
+
+    const comFiltro = await c.evaluate(() => {
+      const cards = [...document.querySelectorAll('.card')];
+      return {
+        zeradoNaTela: cards.some((el) => (el.querySelector('.nome') || {}).textContent === 'ZERADO SPINNER 55'),
+        selosSemEstoque: document.querySelectorAll('.card .selo.sem').length,
+        avisosSemEstoque: document.querySelectorAll('.card .aviso-sem-estoque').length,
+        coresDaBahia: (() => {
+          const card = cards.find((el) => /BAHIA LITE/.test((el.querySelector('.nome') || {}).textContent || ''));
+          return card ? card.querySelectorAll('.cores .cor').length : -1;
+        })(),
+      };
+    });
+    conferir('com "só com saldo" o item zerado some da grade', !comFiltro.zeradoNaTela);
+    conferir('nenhum card fica marcado SEM ESTOQUE com o filtro ligado',
+      comFiltro.selosSemEstoque === 0 && comFiltro.avisosSemEstoque === 0,
+      `${comFiltro.selosSemEstoque} selos, ${comFiltro.avisosSemEstoque} avisos`);
+    conferir('a cor sem saldo sai do seletor de cores (BAHIA: 3 → 2)',
+      comFiltro.coresDaBahia === 2, 'achei ' + comFiltro.coresDaBahia);
+
+    const tituloJanela = await (async () => {
+      await c.click('.card .ver-cores');
+      await c.waitForTimeout(700);
+      const t = await c.textContent('#janela .sub');
+      await c.keyboard.press('Escape');
+      await c.waitForTimeout(400);
+      return t || '';
+    })();
+    conferir('a janela de cores respeita o filtro', /2 cores/.test(tituloJanela), JSON.stringify(tituloJanela.trim()));
+    await foto(c, '16-so-com-saldo');
+
+    await c.click('#chip-disponivel');
+    await c.waitForTimeout(900);
+    const semFiltro = await c.$$eval('.card .selo.sem', (e) => e.length);
+    conferir('desligando o filtro, o item sem estoque volta', semFiltro > 0);
+
+    // --- anexar foto: opção só para a equipe, não para o cliente ---
+    const botaoFotoCliente = await c.$$eval('.subir-foto', (e) => e.length);
+    conferir('cliente não vê a opção de anexar foto', botaoFotoCliente === 0);
 
     // --- cliente de uma marca só não vê a barra de abas ---
     const ctxSo = await navegador.newContext({ viewport: { width: 1400, height: 1000 } });
