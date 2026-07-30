@@ -14,7 +14,15 @@ const ImportacaoSchema = new mongoose.Schema(
     // 'samsonite' cobre a importação inteira daquela marca (base + fotos),
     // porque lá tudo vem junto num arquivo só — não há as três bases
     // separadas que a Maxprint tem.
-    tipo: { type: String, enum: ['catalogo', 'estoque', 'preco', 'samsonite'], required: true, index: true },
+    // Uma marca nova precisa entrar AQUI também. A Yin's importou 2.568 itens
+    // com sucesso e mesmo assim a tela disse "a leitura falhou", porque o
+    // registro do histórico foi recusado por este enum no último passo.
+    tipo: {
+      type: String,
+      enum: ['catalogo', 'estoque', 'preco', 'samsonite', 'yins'],
+      required: true,
+      index: true,
+    },
     arquivos: { type: Array, default: [] },
     usuario: { type: String, default: '' },
     duracaoSegundos: { type: Number, default: 0 },
