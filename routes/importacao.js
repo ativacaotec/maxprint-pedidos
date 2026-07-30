@@ -646,7 +646,13 @@ async function rodarBuscaDeFotosMaxprint(id, opcoes) {
     // Quem entra na busca: sem foto nenhuma, ou com foto que hoje é dividida
     // com outro item (o recorte errado do PDF). Foto anexada à mão não entra:
     // aquela foi conferida por gente.
-    const todos = await Produto.find({ marcaSlug: MARCA, ativo: true })
+    //
+    // A linha Logitech fica de fora: ela vem na base da Maxprint mas não
+    // existe no site da Maxprint. Procurar por ela aqui só gasta tempo e faz o
+    // relatório mentir que 27 itens "continuam sem foto". Quem cuida deles é o
+    // botão da Logitech, logo abaixo no painel.
+    const foraLogitech = { $nor: [require('../lib/fabricante').filtroDeFabricante('Logitech')] };
+    const todos = await Produto.find({ marcaSlug: MARCA, ativo: true, ...foraLogitech })
       .select('codigo codigoOriginal nome imagem imagemManual').lean();
 
     const usoDaImagem = new Map();
@@ -730,6 +736,121 @@ router.post('/maxprint/fotos', async (req, res) => {
     usuario: req.session.usuario.usuario,
     // Por padrão procura só quem está sem foto ou com foto dividida. Com
     // `todos`, refaz a foto de todo o catálogo pelo site.
+    todos: String(req.body && req.body.todos || 'nao') === 'sim',
+    pausaMs: Math.max(800, Number(req.body && req.body.pausaMs) || 1200),
+  });
+  res.json({ ok: true, tarefa: id });
+});
+
+/* ------------------------------------------------------------------ *
+ * Buscador de fotos na loja da Logitech
+ *
+ * A linha Logitech entra pela base da Maxprint, mas não existe no site da
+ * Maxprint: o buscador de lá volta vazio. Medido em 30/07/2026 eram 29 itens
+ * LOGITECH, 27 sem foto. A loja oficial tem 585 produtos com o part number à
+ * mostra na página, e 25 dos nossos 29 códigos estão lá.
+ * ------------------------------------------------------------------ */
+
+const { buscarFotosLogitech } = require('../lib/buscarFotosLogitech');
+const { filtroDeFabricante } = require('../lib/fabricante');
+
+async function rodarBuscaDeFotosLogitech(id, opcoes) {
+  const MARCA = 'maxprint';
+  let gravadas = 0;
+  const inicio = Date.now();
+  try {
+    marcar(id, { etapa: 'separando os itens Logitech', progresso: 2 });
+
+    const soLogitech = filtroDeFabricante('Logitech');
+    const todos = await Produto.find({ marcaSlug: MARCA, ativo: true, ...soLogitech })
+      .select('codigo codigoOriginal nome imagem imagemManual').lean();
+
+    // Mesma regra da Maxprint: entra quem está sem foto ou dividindo foto com
+    // outro item. Foto anexada à mão não entra — aquela foi conferida por gente.
+    const usoDaImagem = new Map();
+    for (const p of todos) {
+      if (!p.imagem || p.imagemManual) continue;
+      usoDaImagem.set(p.imagem, (usoDaImagem.get(p.imagem) || 0) + 1);
+    }
+    const alvo = todos.filter((p) => !p.imagemManual
+      && (!p.imagem || (usoDaImagem.get(p.imagem) || 0) > 1 || opcoes.todos));
+
+    if (!alvo.length) {
+      marcar(id, {
+        estado: 'pronto', etapa: 'nada a fazer', progresso: 100,
+        relatorio: { procurados: 0, itensLogitech: todos.length, fotosBaixadas: 0 },
+        avisos: todos.length
+          ? ['Todos os itens Logitech já têm foto própria.']
+          : ['Nenhum item Logitech encontrado na base da Maxprint.'],
+      });
+      return;
+    }
+
+    const { resultados, relatorio, avisos } = await buscarFotosLogitech(alvo, {
+      pastaImagens: PASTA_IMAGENS,
+      prefixo: 'logiweb',
+      pausaMs: opcoes.pausaMs,
+      aoAndar: (p) => {
+        const prog = Math.min(92, 5 + Math.round((p.achados / Math.max(1, alvo.length)) * 80));
+        marcar(id, { etapa: p.etapa, progresso: prog });
+      },
+      aoDescartar: async (codigo) => {
+        await Produto.updateOne(
+          { codigo, marcaSlug: MARCA },
+          { $set: { imagem: '', imagemIlustrativa: false, fotoOrigem: '' } }
+        );
+        if (gravadas > 0) gravadas--;
+        marcar(id, { fotosGravadas: gravadas });
+      },
+      aoBaixar: async (r) => {
+        await Produto.updateOne(
+          { codigo: r.codigo, marcaSlug: MARCA },
+          { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } }
+        );
+        gravadas++;
+        marcar(id, { fotosGravadas: gravadas });
+      },
+    });
+
+    marcar(id, { etapa: 'fechando', progresso: 96 });
+    const operacoes = resultados.map((r) => ({
+      updateOne: {
+        filter: { codigo: r.codigo, marcaSlug: MARCA },
+        update: { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } },
+      },
+    }));
+    if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
+
+    const relatorioFinal = {
+      ...relatorio,
+      itensLogitech: todos.length,
+      fotosGravadas: gravadas,
+      aindaSemFoto: await Produto.countDocuments({
+        marcaSlug: MARCA, ativo: true, imagem: '', imagemManual: '', ...soLogitech,
+      }),
+    };
+
+    await Importacao.create({
+      tipo: 'catalogo',
+      arquivos: ['(busca de fotos na loja da Logitech)'],
+      usuario: opcoes.usuario,
+      duracaoSegundos: Math.round((Date.now() - inicio) / 1000),
+      relatorio: relatorioFinal,
+      avisos: avisos.slice(0, 200),
+      erro: '',
+    });
+
+    marcar(id, { estado: 'pronto', etapa: 'concluído', progresso: 100, relatorio: relatorioFinal, avisos });
+  } catch (e) {
+    console.error('[busca fotos logitech]', e);
+    marcar(id, { estado: 'erro', etapa: 'falhou', erro: e.message });
+  }
+}
+
+router.post('/logitech/fotos', async (req, res) => {
+  const id = novaTarefa();
+  rodarBuscaDeFotosLogitech(id, {
+    usuario: req.session.usuario.usuario,
     todos: String(req.body && req.body.todos || 'nao') === 'sim',
     pausaMs: Math.max(800, Number(req.body && req.body.pausaMs) || 1200),
   });
