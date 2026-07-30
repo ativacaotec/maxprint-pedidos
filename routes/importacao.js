@@ -821,15 +821,27 @@ router.post('/fotos/revisar', async (req, res) => {
     const marcaSlug = String(req.query.marca || req.body.marca || 'samsonite').toLowerCase();
     const aplicar = String(req.body.aplicar || 'sim') !== 'nao';
 
-    const produtos = await Produto.find({ marcaSlug, imagem: { $ne: '' } })
-      .select('codigo codigoOriginal nome cor imagem imagemManual fotoOrigem').lean();
+    // A foto de PÁGINA do catálogo (`imagemPagina`) é, por desenho, uma só para
+    // todos os itens daquela página — e sai na tela com o aviso "foto
+    // ilustrativa da linha". Ela repete, mas repete avisando. Por isso entra
+    // numa conta à parte, e só sai se você pedir.
+    const incluirPagina = String(req.body.incluirPagina || 'nao') === 'sim';
+
+    const produtos = await Produto.find({
+      marcaSlug,
+      $or: [{ imagem: { $ne: '' } }, { imagemPagina: { $ne: '' } }],
+    }).select('codigo codigoOriginal nome cor imagem imagemPagina imagemManual fotoOrigem').lean();
 
     const porArquivo = new Map();
     const porPagina = new Map();
+    const comPaginaIlustrativa = [];
     for (const p of produtos) {
       if (p.imagemManual) continue;
-      if (!porArquivo.has(p.imagem)) porArquivo.set(p.imagem, []);
-      porArquivo.get(p.imagem).push(p);
+      if (p.imagemPagina) comPaginaIlustrativa.push(p);
+      if (p.imagem) {
+        if (!porArquivo.has(p.imagem)) porArquivo.set(p.imagem, []);
+        porArquivo.get(p.imagem).push(p);
+      }
       const pag = paginaDaOrigem(p.fotoOrigem);
       if (pag) {
         if (!porPagina.has(pag)) porPagina.set(pag, []);
@@ -848,12 +860,20 @@ router.post('/fotos/revisar', async (req, res) => {
     for (const [pag, lista] of porPagina) marcarGrupo(lista, 'mesma página de origem', pag);
 
     let limpos = 0;
+    let paginasLimpas = 0;
     if (aplicar && suspeitos.size) {
       const r = await Produto.updateMany(
         { marcaSlug, codigo: { $in: [...suspeitos.keys()] }, imagemManual: '' },
-        { $set: { imagem: '', imagemPagina: '', imagemIlustrativa: false, fotoOrigem: '' } }
+        { $set: { imagem: '', imagemIlustrativa: false, fotoOrigem: '' } }
       );
       limpos = r.modifiedCount || r.nModified || 0;
+    }
+    if (aplicar && incluirPagina && comPaginaIlustrativa.length) {
+      const r = await Produto.updateMany(
+        { marcaSlug, codigo: { $in: comPaginaIlustrativa.map((p) => p.codigo) }, imagemManual: '' },
+        { $set: { imagemPagina: '', imagemIlustrativa: false } }
+      );
+      paginasLimpas = r.modifiedCount || r.nModified || 0;
     }
 
     res.json({
@@ -863,9 +883,14 @@ router.post('/fotos/revisar', async (req, res) => {
         comFoto: produtos.length,
         gruposRepetidos: grupos.length,
         produtosSuspeitos: suspeitos.size,
+        comPaginaIlustrativa: comPaginaIlustrativa.length,
         fotosLimpas: limpos,
+        paginasLimpas,
         aplicado: aplicar,
-        semFotoAgora: await Produto.countDocuments({ marcaSlug, ativo: true, imagem: '', imagemManual: '' }),
+        incluiuPagina: incluirPagina,
+        semFotoAgora: await Produto.countDocuments({
+          marcaSlug, ativo: true, imagem: '', imagemManual: '', imagemPagina: '',
+        }),
       },
       amostra: grupos.slice(0, 15),
     });
