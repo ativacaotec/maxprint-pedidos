@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Catálogos Ativação</title>
+<link rel="icon" href="/logos/ativacao.png">
 <style>
 :root{
   /* --laranja é a cor de destaque EM USO. Ela começa no laranja da Ativação
@@ -760,11 +761,16 @@ function filtrados() {
     if (S.linha && c.linhaProduto !== S.linha) return false;
     if (S.soDisponivel && !card.cores.some(x => x.disponivel)) return false;
     if (!q) return true;
+    // Só compara código quando o termo TEM dígito. Sem essa guarda,
+    // `q.replace(/\D/g,'')` virava string vazia para qualquer busca por nome, e
+    // `'123'.includes('')` é sempre true — ou seja, digitar "BAHIA" devolvia o
+    // catálogo inteiro, como se a busca não existisse.
+    const digitos = q.replace(/\D/g, '');
     return card.cores.some(x =>
       (x.nome||'').toLowerCase().includes(q) ||
-      String(x.codigo).includes(q.replace(/\D/g,'')) ||
+      (digitos !== '' && String(x.codigo).includes(digitos)) ||
       String(x.codigoOriginal||'').toLowerCase().includes(q) ||
-      String(x.ean||'').includes(q)
+      (x.ean ? String(x.ean).includes(q) : false)
     );
   });
 }
@@ -1289,6 +1295,12 @@ async function enviarPedido() {
     const d = await r.json();
     if (!r.ok) { erroFechamento(d.erro, d.campos); return; }
     S.carrinho = {}; salvar(); atualizarBadge();
+    // Limpar o estado não bastava: a gaveta do carrinho, a barra de baixo e as
+    // quantidades nos cards continuavam mostrando o pedido recém-enviado, com o
+    // botão "Fechar pedido" ativo. Quem clicasse de novo levava um
+    // "O carrinho está vazio." sem entender por quê.
+    desenhar();
+    await pedirPrevia();
     $('janela').innerHTML = `
       <h2>Pedido ${d.numero} enviado</h2>
       <p class="sub">O representante já foi avisado. Guarde uma cópia se quiser.</p>
@@ -1393,6 +1405,11 @@ $('btn-sair').addEventListener('click', async () => {
 $('condicao').addEventListener('change', async (e) => {
   S.condicao = e.target.value;
   await carregar();
+});
+// Esc fecha a janela aberta, como em qualquer tela: era o único jeito óbvio
+// que não funcionava (só dava para sair no X ou clicando fora).
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $('tapa').classList.remove('aberto');
 });
 $('tapa').addEventListener('click', (e) => {
   if (e.target === $('tapa')) $('tapa').classList.remove('aberto');
