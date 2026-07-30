@@ -87,6 +87,31 @@ const ProdutoSchema = new mongoose.Schema(
     paginaCatalogo: { type: Number, default: null },
     grupoCores: { type: Array, default: [] },
 
+    /* ------------------------- campos da Yin's --------------------------- *
+     * A Yin's não tem planilha: tudo sai do catálogo em PDF. Três coisas que
+     * as outras marcas não têm e que mudam o pedido:
+     *
+     *  - o saldo não é número, é tarja: REGULAR, REDUZIDO, ZERADO ou
+     *    PRÉ-VENDA. Não dá para limitar quantidade por saldo, então quem manda
+     *    é a tarja (ver Marca.saldoPorSituacao);
+     *  - a unidade de venda muda de catálogo para catálogo (peça, embalagem,
+     *    kit, par, jogo). Quem digita 24 achando que são peças, num item
+     *    vendido em embalagem de 12, está pedindo 288;
+     *  - o imposto vem escrito na ficha: IPI com percentual e ST sem, porque
+     *    o percentual do ST varia por estado.
+     */
+    situacaoEstoque: { type: String, default: '', index: true }, // REGULAR|REDUZIDO|ZERADO|PRE-VENDA
+    unidadeVenda: { type: String, default: '' },                 // peça | embalagem | kit | par | jogo
+    pedidoMinimo: { type: Number, default: 0 },                  // 0 = sem mínimo escrito na ficha
+    precoCaixa: { type: Number, default: null },                 // caixa fechada, quando o catálogo traz os dois
+    condicaoCaixa: { type: String, default: '' },
+    caixaMasterTexto: { type: String, default: '' },
+    temST: { type: Boolean, default: false },
+    lancamento: { type: Boolean, default: false },
+    catalogoNome: { type: String, default: '', index: true },    // qual tabela da Yin's
+    segmento: { type: String, default: '', index: true },        // seção do sumário do catálogo
+    ref: { type: String, default: '' },                          // REF do catálogo, sem a cor
+
     ativo: { type: Boolean, default: true },
   },
   { timestamps: true }

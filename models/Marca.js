@@ -93,6 +93,26 @@ const MarcaSchema = new mongoose.Schema(
      */
     mostrarSemEstoque: { type: Boolean, default: false },
 
+    /**
+     * O saldo desta marca é uma TARJA, não um número.
+     *
+     * A Yin's publica REGULAR, REDUZIDO, ZERADO ou PRÉ-VENDA em vez de
+     * quantidade. Com isto ligado, o catálogo para de tentar mostrar "40
+     * disponíveis" e de limitar a quantidade pelo saldo — quem decide se o
+     * item pode ser pedido é a tarja, e ZERADO fica só para consulta.
+     */
+    saldoPorSituacao: { type: Boolean, default: false },
+
+    /**
+     * O preço do catálogo é CUSTO, com o imposto informado à parte.
+     *
+     * Na Yin's o valor impresso é o custo do item e, logo abaixo, se ele tem
+     * IPI (com percentual) e ST (sem, porque o percentual varia por estado). A
+     * tela precisa saber disso para escrever o imposto embaixo do preço, em
+     * vez de fingir que aquele é o valor final.
+     */
+    precoEhCusto: { type: Boolean, default: false },
+
     /** Sobrepõe Config.emailsAviso quando precisar avisar gente diferente por marca. Vazio = usa o global. */
     emailsAviso: { type: [String], default: [] },
   },
