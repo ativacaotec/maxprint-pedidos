@@ -323,15 +323,26 @@ router.post('/preco', upload.array('arquivos', 4), async (req, res) => {
  * Foto avulsa: cobre o que o catálogo não ilustra
  * ------------------------------------------------------------------ */
 
+// O código vira nome de arquivo, então nada de barra, ponto-ponto e afins.
+const codigoSeguro = (c) => String(c || '').replace(/[^0-9A-Za-z]/g, '').slice(0, 40);
+
 const uploadImagem = multer({
   storage: multer.diskStorage({
     destination: PASTA_IMAGENS,
     filename: (req, file, cb) => {
-      const ext = (path.extname(file.originalname) || '.png').toLowerCase();
-      cb(null, `manual-${req.params.codigo}${ext}`);
+      let ext = (path.extname(file.originalname) || '').toLowerCase();
+      if (!['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) ext = '.jpg';
+      // O carimbo de tempo é o que faz a foto nova aparecer na hora: o /img é
+      // servido com cache de 30 dias, e regravar o mesmo nome deixaria o
+      // navegador mostrando a foto velha.
+      cb(null, `manual-${codigoSeguro(req.params.codigo)}-${Date.now().toString(36)}${ext}`);
     },
   }),
   limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\//i.test(file.mimetype)) return cb(null, true);
+    cb(new Error('Envie uma imagem (JPG, PNG ou WEBP).'));
+  },
 });
 
 router.post('/foto/:codigo', uploadImagem.single('imagem'), async (req, res) => {
@@ -341,11 +352,16 @@ router.post('/foto/:codigo', uploadImagem.single('imagem'), async (req, res) => 
   const marcaSlug = String(req.query.marca || 'maxprint').toLowerCase();
   const p = await Produto.findOneAndUpdate(
     { codigo: req.params.codigo, marcaSlug },
-    { imagemManual: req.file.filename },
+    // A foto anexada à mão passa a ser a boa, e a origem fica registrada para
+    // a faxina de fotos repetidas não mexer nela nunca mais.
+    { imagemManual: req.file.filename, imagemIlustrativa: false, fotoOrigem: `anexada por ${req.session.usuario.usuario}` },
     { new: true }
   ).lean();
-  if (!p) return res.status(404).json({ erro: 'Produto não encontrado.' });
-  res.json({ ok: true, imagem: req.file.filename });
+  if (!p) {
+    try { fs.unlinkSync(path.join(PASTA_IMAGENS, req.file.filename)); } catch (_) {}
+    return res.status(404).json({ erro: 'Produto não encontrado.' });
+  }
+  res.json({ ok: true, imagem: req.file.filename, codigo: p.codigo, nome: p.nome });
 });
 
 /* ------------------------------------------------------------------ *
@@ -774,6 +790,89 @@ router.get('/samsonite/status/:id', (req, res) => {
   const t = tarefas.get(req.params.id);
   if (!t) return res.status(404).json({ erro: 'Importação não encontrada (o servidor pode ter reiniciado).' });
   res.json(t);
+});
+
+/* ------------------------------------------------------------------ *
+ * Faxina das fotos repetidas
+ *
+ * Conserta o estrago que a versão antiga do buscador deixou no banco: a
+ * página de UMA cor escrevia também os SKUs das cores irmãs, e a mesma foto
+ * foi gravada em todos eles. No catálogo do cliente isso aparece como três
+ * mochilas com a foto da mesma cor, com o nome da cor certo embaixo.
+ *
+ * Duas assinaturas denunciam a foto suspeita:
+ *   1. o mesmo ARQUIVO em mais de um código — é o caso das páginas inteiras
+ *      do catálogo em PDF, usadas como ilustração de vários itens;
+ *   2. a mesma PÁGINA de origem em mais de um código — é o caso da loja: cada
+ *      código ganhou um arquivo próprio, mas todos saíram da mesma foto.
+ *
+ * Foto anexada à mão pelo admin não é tocada: aquela foi conferida por gente.
+ * A suspeita é apagada do produto, não do disco — a próxima busca regrava por
+ * cima com o mesmo nome de arquivo.
+ * ------------------------------------------------------------------ */
+
+function paginaDaOrigem(origem) {
+  const m = String(origem || '').match(/https?:\/\/\S+/);
+  return m ? m[0] : '';
+}
+
+router.post('/fotos/revisar', async (req, res) => {
+  try {
+    const marcaSlug = String(req.query.marca || req.body.marca || 'samsonite').toLowerCase();
+    const aplicar = String(req.body.aplicar || 'sim') !== 'nao';
+
+    const produtos = await Produto.find({ marcaSlug, imagem: { $ne: '' } })
+      .select('codigo codigoOriginal nome cor imagem imagemManual fotoOrigem').lean();
+
+    const porArquivo = new Map();
+    const porPagina = new Map();
+    for (const p of produtos) {
+      if (p.imagemManual) continue;
+      if (!porArquivo.has(p.imagem)) porArquivo.set(p.imagem, []);
+      porArquivo.get(p.imagem).push(p);
+      const pag = paginaDaOrigem(p.fotoOrigem);
+      if (pag) {
+        if (!porPagina.has(pag)) porPagina.set(pag, []);
+        porPagina.get(pag).push(p);
+      }
+    }
+
+    const suspeitos = new Map(); // codigo -> motivo
+    const grupos = [];
+    const marcarGrupo = (lista, motivo, chave) => {
+      if (lista.length < 2) return;
+      grupos.push({ motivo, chave, codigos: lista.map((p) => p.codigoOriginal || p.codigo) });
+      lista.forEach((p) => suspeitos.set(p.codigo, motivo));
+    };
+    for (const [arq, lista] of porArquivo) marcarGrupo(lista, 'mesmo arquivo de imagem', arq);
+    for (const [pag, lista] of porPagina) marcarGrupo(lista, 'mesma página de origem', pag);
+
+    let limpos = 0;
+    if (aplicar && suspeitos.size) {
+      const r = await Produto.updateMany(
+        { marcaSlug, codigo: { $in: [...suspeitos.keys()] }, imagemManual: '' },
+        { $set: { imagem: '', imagemPagina: '', imagemIlustrativa: false, fotoOrigem: '' } }
+      );
+      limpos = r.modifiedCount || r.nModified || 0;
+    }
+
+    res.json({
+      ok: true,
+      relatorio: {
+        marca: marcaSlug,
+        comFoto: produtos.length,
+        gruposRepetidos: grupos.length,
+        produtosSuspeitos: suspeitos.size,
+        fotosLimpas: limpos,
+        aplicado: aplicar,
+        semFotoAgora: await Produto.countDocuments({ marcaSlug, ativo: true, imagem: '', imagemManual: '' }),
+      },
+      amostra: grupos.slice(0, 15),
+    });
+  } catch (e) {
+    console.error('[revisar fotos]', e);
+    res.status(500).json({ erro: `Não consegui revisar as fotos: ${e.message}` });
+  }
 });
 
 /* ------------------------------------------------------------------ *
