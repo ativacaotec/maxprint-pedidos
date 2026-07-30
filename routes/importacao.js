@@ -624,6 +624,257 @@ router.post(
   }
 );
 
+/* ------------------------------------------------------------------ *
+ * Yin's — o catálogo em PDF É a base
+ *
+ * Aqui não existe planilha nem HTML da fábrica: código, descrição, custo,
+ * imposto e situação de estoque saem todos do PDF. Cada catálogo enviado vira
+ * uma "tabela" (Papelaria, Mochilas, Volta às Aulas...), que é a categoria do
+ * produto no menu do cliente; a seção do sumário de cada catálogo vira a linha.
+ *
+ * Roda em segundo plano e usa a mesma lista de tarefas das outras marcas: um
+ * catálogo de 485 páginas leva alguns minutos, e o Nginx corta conexão ociosa
+ * bem antes disso.
+ * ------------------------------------------------------------------ */
+
+const { importarCatalogoYins } = require('../lib/importCatalogoYins');
+
+/** Nome da tabela a partir do arquivo: "TABELA_YINS_KIDS_2026 2.pdf" -> "Yins Kids". */
+function tituloDoArquivo(nomeArquivo) {
+  return String(nomeArquivo || '')
+    .replace(/\.pdf$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\bcompress(ed|ado)\b/gi, '')
+    .replace(/\bcompactado\b/gi, '')
+    .replace(/\btabela\b/gi, '')
+    .replace(/\b\d{1,2}\b(?=\s*$)/, '')
+    .replace(/\s+/g, ' ')
+    .trim() || 'Catálogo';
+}
+
+async function rodarImportacaoYins(id, arquivos, opcoes) {
+  const MARCA = 'yins';
+  const inicio = Date.now();
+  try {
+    marcar(id, { etapa: 'conferindo as ferramentas de leitura de PDF', progresso: 1 });
+
+    // Uma foto só pode ser de um código. O mapa é compartilhado entre os
+    // catálogos: se a mesma imagem aparece em dois, nenhum dos dois fica com
+    // ela — foto errada é pior que foto faltando.
+    const porConteudo = new Map();
+    const todos = [];
+    const avisos = [];
+    const porCatalogo = [];
+
+    for (const [i, f] of arquivos.entries()) {
+      const titulo = opcoes.titulos[i] || tituloDoArquivo(f.originalname);
+      marcar(id, {
+        etapa: `lendo ${titulo} (${i + 1} de ${arquivos.length})`,
+        progresso: 2 + Math.round((90 * i) / Math.max(1, arquivos.length)),
+      });
+      const r = await importarCatalogoYins(f.path, {
+        pastaImagens: PASTA_IMAGENS,
+        prefixo: 'yins',
+        titulo,
+        porConteudo,
+        aoAndar: (p) => marcar(id, {
+          etapa: `${titulo}: página ${p.pagina} de ${p.total}, ${p.produtos} itens`,
+          progresso: 2 + Math.round((90 * (i + p.pagina / Math.max(1, p.total))) / Math.max(1, arquivos.length)),
+        }),
+      });
+      todos.push(...r.produtos);
+      avisos.push(...r.avisos.map((a) => `${titulo}: ${a}`));
+      porCatalogo.push(r.relatorio);
+    }
+
+    marcar(id, { etapa: 'gravando no catálogo', progresso: 94 });
+
+    // Subir um catálogo NÃO apaga os outros.
+    //
+    // São sete tabelas, mais de 150 MB de PDF. Ninguém sobe tudo de uma vez, e
+    // quando chega a Papelaria nova as outras seis continuam valendo. Então a
+    // base guardada é atualizada por TABELA: sai o que era daquela tabela,
+    // entra o que acabou de ser lido, e o resto fica onde está.
+    const guardada = await Base.findOne({ marcaSlug: MARCA, tipo: 'base' }).lean();
+    const anteriores = (guardada && guardada.itens) || [];
+    const titulosLidos = new Set(porCatalogo.map((r) => r.catalogo));
+    const mantidos = anteriores.filter((p) => !titulosLidos.has(p.catalogo));
+    // Código que voltou noutra tabela pertence à leitura nova.
+    const novos = new Set(todos.map((p) => p.codigo));
+    const base = [...mantidos.filter((p) => !novos.has(p.codigo)), ...todos];
+
+    const origemAntes = ((guardada && guardada.origem) || []).filter((o) => !titulosLidos.has(o.titulo));
+    await Base.findOneAndUpdate(
+      { marcaSlug: MARCA, tipo: 'base' },
+      {
+        marcaSlug: MARCA, tipo: 'base', itens: base,
+        origem: [
+          ...origemAntes,
+          ...arquivos.map((f, i) => ({
+            arquivo: f.originalname,
+            titulo: opcoes.titulos[i] || tituloDoArquivo(f.originalname),
+            itens: todos.filter((p) => p.catalogo === (opcoes.titulos[i] || tituloDoArquivo(f.originalname))).length,
+            em: new Date(),
+          })),
+        ],
+        atualizadoEm: new Date(),
+      },
+      { upsert: true }
+    );
+
+    const relatorio = await gravarProdutosYins(base, avisos);
+    relatorio.lidosAgora = todos.length;
+    relatorio.mantidosDeAntes = base.length - todos.length;
+    relatorio.porCatalogo = porCatalogo;
+
+    await Importacao.create({
+      tipo: 'yins',
+      arquivos: arquivos.map((f) => f.originalname),
+      usuario: opcoes.usuario,
+      duracaoSegundos: Math.round((Date.now() - inicio) / 1000),
+      relatorio,
+      avisos: avisos.slice(0, 300),
+      erro: '',
+    });
+
+    marcar(id, {
+      estado: 'pronto', etapa: 'concluído', progresso: 100,
+      relatorio, avisos: avisos.slice(0, 60),
+    });
+  } catch (e) {
+    console.error('[import yins]', e);
+    marcar(id, { estado: 'erro', etapa: 'falhou', erro: e.message });
+    await Importacao.create({
+      tipo: 'yins', arquivos: arquivos.map((f) => f.originalname),
+      usuario: opcoes.usuario,
+      duracaoSegundos: Math.round((Date.now() - inicio) / 1000),
+      relatorio: {}, avisos: [], erro: e.message,
+    }).catch(() => {});
+  } finally {
+    limpar(arquivos);
+  }
+}
+
+/**
+ * Grava os itens lidos como produtos da Yin's.
+ *
+ * `categoria` recebe o nome do catálogo e `linhaProduto` a seção do sumário:
+ * assim o menu lateral do cliente, que já sabe trabalhar com categoria e
+ * linha, mostra a Yin's sem precisar de tela nova.
+ */
+async function gravarProdutosYins(itens, avisos) {
+  const MARCA = 'yins';
+
+  // Foto anexada à mão sobrevive a qualquer reimportação.
+  const anteriores = await Produto.find({ marcaSlug: MARCA }).select('codigo imagemManual').lean();
+  const mapaManual = new Map(anteriores.filter((a) => a.imagemManual).map((a) => [a.codigo, a.imagemManual]));
+
+  const operacoes = itens.map((p) => ({
+    updateOne: {
+      filter: { codigo: p.codigo, marcaSlug: MARCA },
+      update: {
+        $set: {
+          marcaSlug: MARCA,
+          codigo: p.codigo,
+          codigoOriginal: p.codigoOriginal,
+          ref: p.ref,
+          nome: p.nome || p.ref,
+          descricaoEstoque: p.descricao,
+          categoria: p.catalogo,
+          linhaProduto: p.segmento,
+          catalogoNome: p.catalogo,
+          segmento: p.segmento,
+          cor: p.cor,
+          precoBase: p.preco,
+          precoCaixa: p.precoCaixa,
+          condicaoCaixa: p.condicaoCaixa,
+          ipi: p.ipi,
+          temST: p.st,
+          unidadeVenda: p.unidadeVenda,
+          embalagem: p.embalagem,
+          caixaMasterTexto: p.caixaMaster,
+          pedidoMinimo: p.pedidoMinimo,
+          situacaoEstoque: p.situacao,
+          status: p.situacao,
+          lancamento: p.lancamento,
+          ean: p.ean,
+          ncm: p.ncm,
+          paginaCatalogo: p.pagina,
+          estoque: 0,
+          previstoTotal: 0,
+          chegadas: [],
+          imagem: p.imagem,
+          imagemManual: mapaManual.get(p.codigo) || '',
+          imagemIlustrativa: false,
+          fotoOrigem: `catálogo ${p.catalogo}, p.${p.pagina}`,
+          ativo: true,
+        },
+      },
+      upsert: true,
+    },
+  }));
+
+  if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
+
+  // Item que saiu dos catálogos sai do ar, mas só quando a leitura produziu
+  // alguma coisa — leitura vazia não pode apagar o catálogo inteiro.
+  const vivos = itens.map((p) => p.codigo);
+  let desativados = 0;
+  if (vivos.length) {
+    const r = await Produto.updateMany(
+      { marcaSlug: MARCA, codigo: { $nin: vivos } }, { $set: { ativo: false } });
+    desativados = r.modifiedCount || r.nModified || 0;
+  } else {
+    avisos.push('A leitura não gerou nenhum item; o catálogo anterior foi mantido como estava.');
+  }
+
+  const porSituacao = {};
+  for (const p of itens) porSituacao[p.situacao || '(sem tarja)'] = (porSituacao[p.situacao || '(sem tarja)'] || 0) + 1;
+
+  return {
+    total: itens.length,
+    comFoto: itens.filter((p) => p.imagem).length,
+    semFoto: itens.filter((p) => !p.imagem).length,
+    semPreco: itens.filter((p) => !p.preco).length,
+    porSituacao,
+    catalogos: [...new Set(itens.map((p) => p.catalogo))].length,
+    segmentos: [...new Set(itens.map((p) => p.segmento))].length,
+    desativados,
+    ativos: await Produto.countDocuments({ marcaSlug: 'yins', ativo: true }),
+  };
+}
+
+router.post('/yins', upload.array('pdfs', 12), async (req, res) => {
+  const arquivos = req.files || [];
+  if (!arquivos.length) return res.status(400).json({ erro: 'Escolha pelo menos um catálogo em PDF.' });
+
+  let titulos = [];
+  try { titulos = JSON.parse(req.body.titulos || '[]'); } catch (_) { titulos = []; }
+
+  const id = novaTarefa();
+  rodarImportacaoYins(id, arquivos, {
+    usuario: req.session.usuario.usuario,
+    titulos,
+  });
+  res.json({ ok: true, tarefa: id });
+});
+
+/** Refaz o catálogo da Yin's com os itens já lidos, sem reler PDF nenhum. */
+router.post('/yins/recruzar', async (req, res) => {
+  try {
+    const guardada = await Base.findOne({ marcaSlug: 'yins', tipo: 'base' }).lean();
+    if (!guardada || !(guardada.itens || []).length) {
+      return res.status(400).json({ erro: 'Não há catálogo da Yin\'s guardado ainda. Suba os PDFs uma vez.' });
+    }
+    const avisos = [];
+    const relatorio = await gravarProdutosYins(guardada.itens, avisos);
+    res.json({ ok: true, relatorio, avisos });
+  } catch (e) {
+    console.error('[yins recruzar]', e);
+    res.status(500).json({ erro: `Não consegui refazer o catálogo da Yin's: ${e.message}` });
+  }
+});
+
 /**
  * Refaz o catálogo da Samsonite com a base e os PDFs que já estão guardados.
  *

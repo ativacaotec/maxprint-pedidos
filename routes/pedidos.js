@@ -73,9 +73,21 @@ async function montarPedido(sessao, corpo) {
     const qtd = Math.floor(Number(l.quantidade || 0));
     if (!p || qtd <= 0) continue;
 
-    const disponivel = p.estoque > 0;
-    const natureza = disponivel ? 'pronta' : 'programado';
-    const limite = disponivel ? p.estoque : (p.previstoTotal || 0);
+    // Marca que trabalha por TARJA (Yin's) não tem número de saldo para
+    // comparar. O que existe é REGULAR / REDUZIDO / ZERADO / PRÉ-VENDA, e a
+    // única recusa possível é o zerado. Se esta função continuasse exigindo
+    // `estoque > 0`, o carrinho da Yin's recusaria todo item, porque lá o
+    // estoque é 0 por definição.
+    const porTarja = !!(marca && marca.saldoPorSituacao);
+    const tarja = String(p.situacaoEstoque || '').toUpperCase();
+
+    const disponivel = porTarja ? (tarja && tarja !== 'ZERADO') : p.estoque > 0;
+    const natureza = porTarja
+      ? (tarja === 'PRE-VENDA' ? 'programado' : 'pronta')
+      : (disponivel ? 'pronta' : 'programado');
+    const limite = porTarja
+      ? (disponivel ? Infinity : 0)
+      : (disponivel ? p.estoque : (p.previstoTotal || 0));
 
     // O bloqueio por saldo é aqui, no servidor. A trava da tela é conforto;
     // esta é a que vale, porque o navegador pode ser contornado.
@@ -84,8 +96,23 @@ async function montarPedido(sessao, corpo) {
         codigo: p.codigo,
         nome: p.nome,
         pedido: qtd,
-        limite,
-        motivo: disponivel ? 'quantidade acima do saldo disponível' : 'quantidade acima da chegada prevista',
+        limite: limite === Infinity ? 0 : limite,
+        motivo: porTarja
+          ? `item ${tarja ? tarja.toLowerCase() : 'sem situação'} no catálogo da fábrica`
+          : (disponivel ? 'quantidade acima do saldo disponível' : 'quantidade acima da chegada prevista'),
+      });
+      continue;
+    }
+
+    // Mínimo por item, escrito na ficha do catálogo ("PEDIDO MÍNIMO: 12
+    // PEÇAS"). Só recusa quando a fábrica escreveu o número.
+    if (p.pedidoMinimo && qtd < p.pedidoMinimo) {
+      recusados.push({
+        codigo: p.codigo,
+        nome: p.nome,
+        pedido: qtd,
+        limite: p.pedidoMinimo,
+        motivo: `o catálogo pede no mínimo ${p.pedidoMinimo} ${p.unidadeVenda || 'peças'} deste item`,
       });
       continue;
     }
