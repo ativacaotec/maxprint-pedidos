@@ -421,18 +421,43 @@ async function rodarImportacaoSamsonite(id, arquivos, opcoes) {
 
     marcar(id, { etapa: 'gravando no banco', progresso: 90 });
 
-    // Foto que o admin subiu à mão sobrevive à reimportação, igual à Maxprint.
-    const manuais = await Produto.find({ marcaSlug: MARCA, imagemManual: { $ne: '' } })
-      .select('codigo imagemManual').lean();
-    const mapaManual = new Map(manuais.map((m) => [m.codigo, m.imagemManual]));
+    // Fotos que já estão no catálogo sobrevivem à reimportação da base.
+    //
+    // O arquivo da Samsonite não traz foto: `importSamsonite` monta cada
+    // produto com `imagem: ''`, e o `$set` abaixo gravava esse vazio por cima
+    // do que já existia. Foi o que aconteceu em 29/07/2026 — a varredura das
+    // lojas oficiais baixou 766 fotos às 20:01 e a reimportação da base às
+    // 20:07 apagou todas, deixando os 1.546 produtos sem imagem de novo.
+    //
+    // Foto encontrada é trabalho de uma hora de varredura: ela fica no banco e
+    // vale para o catálogo, o PDF e o Excel do pedido. Só é substituída quando
+    // a importação traz uma foto de verdade no lugar (a dos PDFs do catálogo).
+    const anteriores = await Produto.find({ marcaSlug: MARCA })
+      .select('codigo imagem imagemManual fotoOrigem').lean();
+    const mapaManual = new Map(
+      anteriores.filter((a) => a.imagemManual).map((a) => [a.codigo, a.imagemManual])
+    );
+    const mapaFoto = new Map(
+      anteriores.filter((a) => a.imagem).map((a) => [a.codigo, { imagem: a.imagem, fotoOrigem: a.fotoOrigem || '' }])
+    );
 
-    const operacoes = produtos.map((p) => ({
-      updateOne: {
-        filter: { codigo: p.codigo, marcaSlug: MARCA },
-        update: { $set: { ...p, marcaSlug: MARCA, imagemManual: mapaManual.get(p.codigo) || '', ativo: true } },
-        upsert: true,
-      },
-    }));
+    let fotosPreservadas = 0;
+    const operacoes = produtos.map((p) => {
+      const campos = { ...p, marcaSlug: MARCA, imagemManual: mapaManual.get(p.codigo) || '', ativo: true };
+      const guardada = mapaFoto.get(p.codigo);
+      if (!campos.imagem && guardada) {
+        campos.imagem = guardada.imagem;
+        campos.fotoOrigem = guardada.fotoOrigem;
+        fotosPreservadas++;
+      }
+      return {
+        updateOne: {
+          filter: { codigo: p.codigo, marcaSlug: MARCA },
+          update: { $set: campos },
+          upsert: true,
+        },
+      };
+    });
     if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
 
     // Só desativa o que é da Samsonite — a Maxprint não pode ser tocada aqui.
@@ -442,6 +467,7 @@ async function rodarImportacaoSamsonite(id, arquivos, opcoes) {
     const relatorio = {
       ...relBase,
       cruzamentoFotos: relCruz,
+      fotosPreservadas,
       desativados: await Produto.countDocuments({ marcaSlug: MARCA, ativo: false }),
     };
 
