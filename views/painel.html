@@ -504,6 +504,30 @@ async function abaImportar() {
         <button class="primaria" id="b-recruzar">Refazer catálogo</button>
       </div>
       <div id="resultado-recruzar"></div>
+
+      <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
+      <h2 style="font-size:14px">Fotos da Maxprint pelo site da fábrica</h2>
+      <p class="d">As fotos de hoje vêm do recorte dos catálogos em PDF, e o recorte errou:
+         <b>${contaMarca('maxprint').semFoto} itens sem foto</b> e vários dividindo a mesma imagem —
+         há recorte de seção inteira servindo de foto para dezenas de produtos ao mesmo tempo.
+         O site da Maxprint publica a foto de cada item com o <b>código no nome do arquivo</b>,
+         então o casamento é exato. Procura só quem está sem foto ou com foto dividida.</p>
+      <div class="solto">
+        <div class="campo"><label>O que refazer</label>
+          <select id="max-fotos-escopo">
+            <option value="nao">Só quem está sem foto ou com foto repetida</option>
+            <option value="sim">Todo o catálogo (refaz até o que já tem foto própria)</option>
+          </select></div>
+        <button class="primaria" id="b-max-fotos">Buscar fotos no site</button>
+        <button id="b-max-revisar">Revisar fotos repetidas</button>
+      </div>
+      <div class="aviso" style="margin-top:0">
+        A varredura visita as páginas <b>uma a uma, com pausa</b>. São cerca de 430 páginas,
+        uns 10 minutos. Pode fechar a tela: continua rodando no servidor.
+      </div>
+      <div id="resultado-max-fotos"></div>
+      <div id="resultado-max-revisar"></div>
+
       ${tabelaDeBases('maxprint')}
     </div>
 
@@ -664,6 +688,7 @@ async function abaImportar() {
   ligarImport('estoque');
   ligarImport('preco');
   ligarRecruzar();
+  ligarFotosMaxprint();
   if (temSamsonite) {
     ligarImportSamsonite(); ligarRecruzarSamsonite(); ligarEstoqueSamsonite();
     ligarBuscaDeFotos(); ligarRevisarFotos();
@@ -719,6 +744,72 @@ function ligarBuscaDeFotos() {
 }
 
 /**
+ * Busca das fotos da Maxprint no site da fábrica, e a faxina das repetidas.
+ *
+ * A ordem que funciona é: primeiro revisar (tira a foto dividida), depois
+ * buscar (traz a foto certa de cada código). O botão de busca já entende quem
+ * está com foto dividida, então dá para fazer direto — a revisão é para quando
+ * você quer ver o tamanho do problema antes.
+ */
+function ligarFotosMaxprint() {
+  const botao = $('b-max-fotos');
+  if (!botao) return;
+
+  botao.onclick = async () => {
+    botao.disabled = true;
+    $('resultado-max-fotos').innerHTML = '<div class="aviso">Começando a varredura...</div>';
+    try {
+      const { tarefa } = await api('/api/importacao/maxprint/fotos', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ todos: $('max-fotos-escopo').value }),
+      });
+      acompanharFotosMarca(tarefa, 'resultado-max-fotos', botao, 'Maxprint');
+    } catch (e) {
+      $('resultado-max-fotos').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      botao.disabled = false;
+    }
+  };
+
+  const revisar = $('b-max-revisar');
+  if (revisar) revisar.onclick = () => faxinaDeFotos('maxprint', 'resultado-max-revisar', revisar);
+}
+
+/** Acompanhamento de qualquer busca de fotos, seja de que marca for. */
+async function acompanharFotosMarca(id, ondeEscrever, botao, marca) {
+  const alvo = $(ondeEscrever);
+  if (!alvo) return;
+  let t;
+  try { t = await api('/api/importacao/samsonite/status/' + id); }
+  catch (e) { alvo.innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`; return; }
+
+  if (t.estado === 'rodando') {
+    alvo.innerHTML = `<div class="aviso">
+      <b>Buscando fotos da ${esc(marca)}...</b> ${esc(t.etapa)}
+      ${t.fotosGravadas ? `<br>${t.fotosGravadas} fotos já gravadas no catálogo.` : ''}
+      <div style="background:#E5E5E7;border-radius:20px;height:7px;margin-top:9px;overflow:hidden">
+        <div style="background:var(--laranja);height:100%;width:${t.progresso||0}%;transition:width .4s"></div>
+      </div>
+      <div style="font-size:11.5px;color:var(--cinza);margin-top:6px">
+        Pode sair desta tela; a busca continua no servidor.</div></div>`;
+    setTimeout(() => acompanharFotosMarca(id, ondeEscrever, botao, marca), 4000);
+    return;
+  }
+  if (t.estado === 'erro') {
+    alvo.innerHTML = `<div class="aviso erro"><b>A busca falhou.</b><br>${esc(t.erro)}</div>`;
+    if (botao) botao.disabled = false;
+    return;
+  }
+  const r = t.relatorio || {};
+  alvo.innerHTML = `<div class="aviso">
+    <b>${r.fotosBaixadas || 0} fotos novas</b> em ${r.paginasVisitadas || 0} páginas lidas.<br>
+    ${r.fotosAmbiguasDescartadas ? `${r.fotosAmbiguasDescartadas} descartadas por servirem a mais de um código.<br>` : ''}
+    ${r.fotosRepetidasDescartadas ? `${r.fotosRepetidasDescartadas} descartadas por serem a mesma imagem.<br>` : ''}
+    ${r.aindaSemFoto !== undefined ? `${r.aindaSemFoto} itens seguem sem foto.` : ''}
+  </div>`;
+  setTimeout(() => location.reload(), 4000);
+}
+
+/**
  * Faxina das fotos repetidas. Roda em dois tempos de propósito: primeiro
  * mostra o que seria apagado, e só apaga depois de você concordar. Apagar
  * foto de 800 itens sem avisar seria um susto grande demais.
@@ -726,9 +817,22 @@ function ligarBuscaDeFotos() {
 function ligarRevisarFotos() {
   const botao = $('b-sam-revisar');
   if (!botao) return;
-  const alvo = $('resultado-sam-revisar');
+  faxinaDeFotos('samsonite', 'resultado-sam-revisar', botao);
+}
 
-  const chamar = (aplicar, incluirPagina) => api('/api/importacao/fotos/revisar?marca=samsonite', {
+/**
+ * Faxina de fotos repetidas, de qualquer marca.
+ *
+ * Começou só na Samsonite e virou genérica quando a Maxprint apareceu com o
+ * mesmo problema por outro motivo (recorte de seção do PDF servindo de foto
+ * para 77 produtos). A regra de fundo é a mesma: se a imagem é a mesma, byte a
+ * byte, em mais de um código, ninguém fica com ela.
+ */
+function faxinaDeFotos(marca, ondeEscrever, botao) {
+  const alvo = $(ondeEscrever);
+  if (!alvo || !botao) return;
+
+  const chamar = (aplicar, incluirPagina) => api(`/api/importacao/fotos/revisar?marca=${marca}`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ aplicar: aplicar ? 'sim' : 'nao', incluirPagina: incluirPagina ? 'sim' : 'nao' }),
   });
@@ -753,11 +857,11 @@ function ligarRevisarFotos() {
           <input type="checkbox" id="c-sam-pagina"> apagar também as
           <b>${relatorio.comPaginaIlustrativa}</b> fotos de página do catálogo
           (aquelas que saem com o aviso "foto ilustrativa da linha")</label>` : ''}
-        <button class="primaria" id="b-sam-revisar-ok">Apagar essas fotos</button>
-        <button id="b-sam-revisar-nao">Deixar como está</button>
+        <button class="primaria" id="b-faxina-ok-${marca}">Apagar essas fotos</button>
+        <button id="b-faxina-nao-${marca}">Deixar como está</button>
       </div>`;
-      $('b-sam-revisar-nao').onclick = () => { alvo.innerHTML = ''; botao.disabled = false; };
-      $('b-sam-revisar-ok').onclick = async () => {
+      $(`b-faxina-nao-${marca}`).onclick = () => { alvo.innerHTML = ''; botao.disabled = false; };
+      $(`b-faxina-ok-${marca}`).onclick = async () => {
         const comPagina = !!($('c-sam-pagina') && $('c-sam-pagina').checked);
         alvo.innerHTML = '<div class="aviso">Apagando...</div>';
         try {
