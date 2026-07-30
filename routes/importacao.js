@@ -866,6 +866,17 @@ async function rodarBuscaDeFotos(id, opcoes) {
       // A varredura leva de 30 a 60 minutos: se o servidor reiniciar no meio,
       // tudo que já foi encontrado até ali continua valendo, e a próxima busca
       // começa menor, porque só procura quem ainda está sem foto.
+      // Quando a mesma foto aparece de novo em outro código, a que já tinha
+      // sido gravada volta atrás. Os dois ficam sem foto, e o Marcelo anexa a
+      // certa pelo catálogo.
+      aoDescartar: async (codigo) => {
+        await Produto.updateOne(
+          { codigo, marcaSlug: MARCA },
+          { $set: { imagem: '', imagemIlustrativa: false, fotoOrigem: '' } }
+        );
+        if (gravadas > 0) gravadas--;
+        marcar(id, { fotosGravadas: gravadas });
+      },
       aoBaixar: async (r) => {
         await Produto.updateOne(
           { codigo: r.codigo, marcaSlug: MARCA },
