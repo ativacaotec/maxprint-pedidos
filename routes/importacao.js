@@ -69,10 +69,22 @@ async function recruzar() {
   if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
 
   // Some do catálogo o que saiu das planilhas, sem apagar o histórico.
+  //
+  // Trava: cruzamento que não produziu NENHUM produto não desativa nada. Isso
+  // só acontece quando uma das bases veio vazia ou ilegível, e nesse caso
+  // apagar o catálogo inteiro é o pior desfecho possível — melhor manter o que
+  // estava valendo e deixar o problema visível no relatório.
   const vivos = produtos.map((p) => p.codigo);
-  await Produto.updateMany({ marcaSlug: MARCA, codigo: { $nin: vivos } }, { $set: { ativo: false } });
+  if (vivos.length) {
+    await Produto.updateMany({ marcaSlug: MARCA, codigo: { $nin: vivos } }, { $set: { ativo: false } });
+  } else {
+    relatorio.catalogoPreservado = true;
+    relatorio.aviso = 'O cruzamento não gerou nenhum produto, então o catálogo anterior foi mantido '
+      + 'como estava. Confira as bases de preço, estoque e catálogo.';
+  }
 
   relatorio.desativados = await Produto.countDocuments({ marcaSlug: MARCA, ativo: false });
+  relatorio.ativos = await Produto.countDocuments({ marcaSlug: MARCA, ativo: true });
   return relatorio;
 }
 
@@ -180,6 +192,19 @@ router.post('/estoque', upload.array('arquivos', 12), async (req, res) => {
     const resultados = req.files.map((f) => importarEstoque(f.path, f.originalname));
     const junto = juntarEstoque(resultados);
 
+    // A base guardada é a fonte do catálogo: enquanto uma nova não chega, a
+    // última continua valendo. Por isso um arquivo que não rendeu nenhuma
+    // linha NÃO substitui o que está gravado — senão bastaria subir a planilha
+    // errada uma vez para o catálogo inteiro sumir. Recusa e explica.
+    if (!junto.itens.length) {
+      limpar(req.files);
+      return res.status(400).json({
+        erro: 'Nenhuma linha de estoque foi lida nesses arquivos, então nada foi alterado — '
+          + 'a base anterior continua valendo. Confira se as planilhas são os "Mapa de chegadas" '
+          + '(a tabela de preço vai no botão de preço).',
+      });
+    }
+
     await Base.findOneAndUpdate(
       { tipo: 'estoque' },
       {
@@ -244,6 +269,15 @@ router.post('/preco', upload.array('arquivos', 4), async (req, res) => {
     // Arquivo mais recente vence em caso de código repetido.
     const mapa = new Map();
     for (const it of todos) mapa.set(it.codigo, it);
+
+    // Mesma proteção do estoque: base vazia não substitui a que está guardada.
+    if (!mapa.size) {
+      limpar(req.files);
+      return res.status(400).json({
+        erro: 'Nenhum preço foi lido nesse arquivo, então nada foi alterado — a tabela anterior '
+          + 'continua valendo. Confira se é a "Tabela Maxprint" com as abas de categoria.',
+      });
+    }
 
     await Base.findOneAndUpdate(
       { tipo: 'preco' },
@@ -680,6 +714,53 @@ router.get('/samsonite/status/:id', (req, res) => {
   const t = tarefas.get(req.params.id);
   if (!t) return res.status(404).json({ erro: 'Importação não encontrada (o servidor pode ter reiniciado).' });
   res.json(t);
+});
+
+/* ------------------------------------------------------------------ *
+ * Refazer o cruzamento da Maxprint, sem reenviar arquivo
+ *
+ * As três bases da Maxprint (preço, estoque e catálogo) ficam guardadas no
+ * banco e continuam valendo enquanto uma versão nova não chega. O cruzamento
+ * que transforma as três em produtos do catálogo, porém, só rodava dentro de
+ * uma importação — então, se o catálogo esvaziasse por qualquer motivo, o
+ * único jeito de trazer de volta era reenviar uma planilha que o sistema já
+ * tinha guardada.
+ *
+ * Foi o que aconteceu em 29/07/2026: os 392 produtos da Maxprint ficaram
+ * inativos e a aba do cliente abriu vazia, com as três bases intactas.
+ *
+ * Este botão não recebe arquivo e não altera nenhuma base: só reexecuta o
+ * cruzamento do que já está gravado. Rodar duas vezes seguidas dá o mesmo
+ * resultado.
+ * ------------------------------------------------------------------ */
+
+router.post('/recruzar', async (req, res) => {
+  const inicio = Date.now();
+  try {
+    const [preco, estoque] = await Promise.all([
+      Base.findOne({ tipo: 'preco' }).select('itens').lean(),
+      Base.findOne({ tipo: 'estoque' }).select('itens').lean(),
+    ]);
+    const nPreco = (preco?.itens || []).length;
+    const nEstoque = (estoque?.itens || []).length;
+
+    if (!nPreco || !nEstoque) {
+      return res.status(400).json({
+        erro: 'Não dá para refazer o cruzamento: '
+          + (!nPreco ? 'a base de PREÇO está vazia. ' : '')
+          + (!nEstoque ? 'a base de ESTOQUE está vazia. ' : '')
+          + 'Importe essa base primeiro.',
+      });
+    }
+
+    const relatorio = await recruzar();
+    await registrar('recruzamento', req, inicio, relatorio, []);
+    res.json({ ok: true, relatorio });
+  } catch (e) {
+    console.error('[recruzar]', e);
+    await registrar('recruzamento', req, inicio, {}, [], e.message);
+    res.status(500).json({ erro: `Falhou ao refazer o cruzamento: ${e.message}` });
+  }
 });
 
 /* ------------------------------------------------------------------ *
