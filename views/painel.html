@@ -385,6 +385,18 @@ async function abaImportar() {
         </div>
       </div>
       <div id="resultado"></div>
+
+      <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
+      <h2 style="font-size:14px">Refazer o catálogo com as bases atuais</h2>
+      <p class="d">As três bases ficam guardadas e continuam valendo até você subir uma versão nova.
+         Este botão <b>não pede arquivo</b>: refaz o cruzamento do que já está aqui
+         (${situacao.contagem.preco||0} preços, ${situacao.contagem.estoque||0} itens de estoque e
+         ${situacao.contagem.catalogo||0} fichas de catálogo) e reconstrói o catálogo da Maxprint.
+         <br><b>${contaMarca('maxprint').produtos} produtos da Maxprint no ar hoje.</b></p>
+      <div class="solto">
+        <button class="primaria" id="b-recruzar">Refazer catálogo</button>
+      </div>
+      <div id="resultado-recruzar"></div>
     </div>
 
     ${!temSamsonite ? '' : `
@@ -475,7 +487,37 @@ async function abaImportar() {
   ligarImport('catalogo');
   ligarImport('estoque');
   ligarImport('preco');
+  ligarRecruzar();
   if (temSamsonite) { ligarImportSamsonite(); ligarEstoqueSamsonite(); ligarBuscaDeFotos(); }
+}
+
+/**
+ * Refaz o catálogo da Maxprint a partir das bases que já estão guardadas, sem
+ * pedir arquivo nenhum. Existe porque a base fica salva e continua valendo até
+ * chegar uma versão nova — mas, antes disso, o cruzamento só rodava dentro de
+ * uma importação, e um catálogo esvaziado só voltava reenviando planilha.
+ */
+function ligarRecruzar() {
+  const botao = $('b-recruzar');
+  if (!botao) return;
+  botao.onclick = async () => {
+    botao.disabled = true;
+    $('resultado-recruzar').innerHTML = '<div class="aviso">Refazendo o cruzamento...</div>';
+    try {
+      const { relatorio } = await api('/api/importacao/recruzar', { method: 'POST' });
+      const r = relatorio || {};
+      $('resultado-recruzar').innerHTML = `<div class="aviso">
+        Catálogo refeito: <b>${r.ativos || 0} produtos da Maxprint no ar</b>
+        (${r.comPrecoESaldo || 0} com preço e saldo, de ${r.precoTotal || 0} preços e
+        ${r.estoqueTotal || 0} itens de estoque).
+        ${r.aviso ? `<br><b>${esc(r.aviso)}</b>` : ''}
+      </div>`;
+      setTimeout(() => location.reload(), 2500);
+    } catch (e) {
+      $('resultado-recruzar').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      botao.disabled = false;
+    }
+  };
 }
 
 function ligarBuscaDeFotos() {
