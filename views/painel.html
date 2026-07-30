@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Painel · Pedidos Maxprint</title>
+<title>Painel · Catálogos Ativação</title>
 <style>
 :root{ --laranja:#EB8704; --laranja-claro:#FFF3E3; --preto:#0B0B0C; --cinza:#8D8E8E;
        --borda:#E5E5E7; --claro:#F4F4F5; --verde:#0E9F6E; --vermelho:#D92D20; --azul:#1D4ED8; }
@@ -130,8 +130,10 @@ a.acao{ text-decoration:none; color:inherit; }
 <header>
   <img src="/logos/ativacao-branca.png" alt="Ativação">
   <div class="barra"></div>
-  <img class="mx" src="/logos/maxprint.png" alt="Maxprint">
-  <span class="titulo">Painel de pedidos</span>
+  <!-- O sistema deixou de ser de uma marca só: o painel atende Maxprint e
+       Samsonite, então o cabeçalho carrega o nome da casa, não o da fábrica.
+       A marca aparece onde ela de fato manda: nas abas do catálogo. -->
+  <span class="titulo">Catálogos Ativação</span>
   <div class="espaco"></div>
   <span style="color:#8D8E8E;font-size:12.5px" id="quem"></span>
   <button id="sair">Sair</button>
@@ -229,7 +231,7 @@ async function abaPedidos() {
 
     <div class="painel">
       <h2>Chegaram agora</h2>
-      <p class="d">Pedido novo é o que ainda não foi lançado no portal da Maxprint.</p>
+      <p class="d">Pedido novo é o que ainda não foi lançado no portal da fábrica.</p>
       ${tabelaPedidos(novos, 'Nenhum pedido novo no momento.')}
     </div>
 
