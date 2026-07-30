@@ -78,6 +78,24 @@ main{ flex:1; padding:18px 20px 150px; min-width:0; }
        font-size:12.5px; cursor:pointer; }
 .chip.ativo{ background:var(--preto); color:#fff; border-color:var(--preto); }
 
+/* Segunda fileira de filtros. Nasceu para a Yin's, que entra com mais de 4 mil
+   itens em sete tabelas: sem recorte, o cliente rola para sempre. */
+.filtros-extra{ display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+                width:100%; margin-top:10px; padding-top:10px;
+                border-top:1px dashed var(--cinza-borda); }
+.filtros-extra .seletor{ font-size:12.5px; max-width:230px; }
+#chip-limpar{ color:var(--laranja); border-color:var(--laranja); font-weight:700; }
+
+/* Situação da Yin's: a tarja é o saldo. */
+.selo.reduzido{ background:#E0A100; }
+.selo.prevenda{ background:#B35BD8; }
+.imposto{ font-size:11px; color:#B35B00; font-weight:700; margin-top:-4px; margin-bottom:6px; }
+.unidade-venda{ font-size:11px; color:var(--cinza); margin-bottom:6px; }
+.unidade-venda b{ color:var(--preto); }
+.ver-mais{ grid-column:1/-1; display:flex; justify-content:center; padding:18px 0 6px; }
+.ver-mais button{ border:1px solid var(--cinza-borda); background:#fff; border-radius:10px;
+                  padding:11px 22px; font-size:13px; font-weight:700; cursor:pointer; }
+
 .aviso{ background:#FFF8E6; border:1px solid #F5D98A; border-radius:10px; padding:11px 14px;
         font-size:13px; margin-bottom:14px; }
 .aviso.erro{ background:#FDECEC; border-color:#F3B5B0; color:#B42318; }
@@ -389,6 +407,16 @@ main{ flex:1; padding:18px 20px 150px; min-width:0; }
         <span class="chip" id="chip-acrescimo" style="display:none"></span>
         <span class="chip" id="chip-disponivel">Só com saldo</span>
       </div>
+      <!-- Filtros extras. Só aparecem na marca que tem o dado correspondente:
+           com 4 mil itens da Yin's, rolar a grade inteira não é navegação. -->
+      <div class="filtros-extra" id="filtros-extra" style="display:none">
+        <select class="seletor" id="f-situacao"></select>
+        <select class="seletor" id="f-segmento"></select>
+        <select class="seletor" id="f-preco"></select>
+        <span class="chip" id="chip-lancamento">Lançamentos</span>
+        <span class="chip" id="chip-semimposto">Sem ST</span>
+        <span class="chip" id="chip-limpar" style="display:none">Limpar filtros</span>
+      </div>
       <!-- No celular a coluna da esquerda some; sem este seletor não haveria
            como filtrar por categoria. -->
       <div class="filtro-celular"><select id="filtro-celular"></select></div>
@@ -461,6 +489,16 @@ const S = {
   linha: null,
   busca: '',
   soDisponivel: false,
+  // Filtros extras (nasceram para a Yin's, valem para qualquer marca que
+  // tenha o dado). `mostrando` é quantos cards já foram desenhados: a grade
+  // cresce por partes conforme a rolagem, senão 4 mil cards de uma vez travam
+  // o celular do cliente.
+  situacao: '',
+  segmento: '',
+  faixaPreco: '',
+  soLancamento: false,
+  semST: false,
+  mostrando: 0,
   modoLista: false,
   condicao: '30',
   previa: null,
@@ -598,6 +636,7 @@ async function carregar() {
   if (removidos) { salvar(); atualizarBadge(); }
 
   montarMenu();
+  montarFiltrosExtra();
   montarCondicoes();
   desenhar();
   recalcular();
@@ -655,6 +694,83 @@ function montarCards(produtos) {
   }
 
   return cards;
+}
+
+
+/**
+ * Monta a segunda fileira de filtros a partir do que a marca aberta realmente
+ * tem. A Maxprint não tem tarja de situação nem segmento vindo de catálogo, e
+ * mostrar seletor vazio só ocupa espaço — por isso cada um aparece sozinho.
+ */
+function montarFiltrosExtra() {
+  const caixa = $('filtros-extra');
+  const ps = (S.dados && S.dados.produtos) || [];
+  if (!ps.length) { caixa.style.display = 'none'; return; }
+
+  const situacoes = [...new Set(ps.map(p => p.situacaoEstoque).filter(Boolean))];
+  const segmentos = [...new Set(ps.map(p => p.segmento || '').filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const temLancamento = ps.some(p => p.lancamento);
+  const temST = ps.some(p => p.temST);
+
+  const rotuloSituacao = { 'REGULAR': 'Estoque regular', 'REDUZIDO': 'Estoque reduzido',
+                           'ZERADO': 'Zerado', 'PRE-VENDA': 'Pré-venda' };
+  const ordem = ['REGULAR', 'REDUZIDO', 'PRE-VENDA', 'ZERADO'];
+  situacoes.sort((a, b) => ordem.indexOf(a) - ordem.indexOf(b));
+
+  const sel = (id, titulo, opcoes, valor) => {
+    const e = $(id);
+    if (!opcoes.length) { e.style.display = 'none'; return false; }
+    e.style.display = '';
+    e.innerHTML = `<option value="">${titulo}</option>` +
+      opcoes.map(o => `<option value="${escapar(o.v)}"${o.v === valor ? ' selected' : ''}>${escapar(o.r)}</option>`).join('');
+    return true;
+  };
+
+  const a = sel('f-situacao', 'Situação: todas',
+    situacoes.map(v => ({ v, r: rotuloSituacao[v] || v })), S.situacao);
+  const b = sel('f-segmento', 'Seção: todas',
+    segmentos.map(v => ({ v, r: v })), S.segmento);
+
+  // Faixas de custo em cima do que existe: partir a lista em quatro por preço
+  // dá recorte útil sem inventar número redondo que não bate com o catálogo.
+  const precos = ps.map(p => p.preco).filter(v => v > 0).sort((x, y) => x - y);
+  let faixas = [];
+  if (precos.length > 40) {
+    const corte = (f) => precos[Math.floor(precos.length * f)];
+    const marcos = [0, corte(0.25), corte(0.5), corte(0.75)].map(v => Math.round(v));
+    faixas = marcos.map((de, i) => {
+      const ate = i + 1 < marcos.length ? marcos[i + 1] : 0;
+      return { v: `${de}-${ate}`, r: ate ? `${dinheiro(de)} a ${dinheiro(ate)}` : `acima de ${dinheiro(de)}` };
+    });
+  }
+  const c = sel('f-preco', 'Faixa de custo: toda', faixas, S.faixaPreco);
+
+  $('chip-lancamento').style.display = temLancamento ? '' : 'none';
+  $('chip-semimposto').style.display = temST ? '' : 'none';
+  caixa.style.display = (a || b || c || temLancamento || temST) ? 'flex' : 'none';
+}
+
+function atualizarChipsExtra() {
+  const l = $('chip-lancamento'), st = $('chip-semimposto'), limpar = $('chip-limpar');
+  if (l) l.classList.toggle('ativo', S.soLancamento);
+  if (st) st.classList.toggle('ativo', S.semST);
+  const algum = S.situacao || S.segmento || S.faixaPreco || S.soLancamento || S.semST || S.soDisponivel;
+  if (limpar) limpar.style.display = algum ? '' : 'none';
+}
+
+function ligarFiltrosExtra() {
+  const trocou = () => { S.mostrando = 0; montarMenu(); desenhar(); window.scrollTo({ top: 0 }); };
+  $('f-situacao').addEventListener('change', (e) => { S.situacao = e.target.value; trocou(); });
+  $('f-segmento').addEventListener('change', (e) => { S.segmento = e.target.value; trocou(); });
+  $('f-preco').addEventListener('change', (e) => { S.faixaPreco = e.target.value; trocou(); });
+  $('chip-lancamento').addEventListener('click', () => { S.soLancamento = !S.soLancamento; trocou(); });
+  $('chip-semimposto').addEventListener('click', () => { S.semST = !S.semST; trocou(); });
+  $('chip-limpar').addEventListener('click', () => {
+    S.situacao = ''; S.segmento = ''; S.faixaPreco = '';
+    S.soLancamento = false; S.semST = false; S.soDisponivel = false;
+    montarFiltrosExtra(); trocou();
+  });
 }
 
 /* ==================================================================
@@ -788,20 +904,36 @@ function filtrados() {
     const c = corAtual(vista);
     if (S.categoria && c.categoria !== S.categoria) continue;
     if (S.linha && c.linhaProduto !== S.linha) continue;
-    if (!q) { saida.push(vista); continue; }
+
+    // Filtros extras, aplicados sobre as cores que sobraram. Um card entra se
+    // ALGUMA cor dele passa — filtrar por card inteiro esconderia a cor certa
+    // junto com a errada, que foi o erro do "só com saldo" antes.
+    let restantes = cores;
+    if (S.situacao) restantes = restantes.filter(x => (x.situacaoEstoque || '') === S.situacao);
+    if (S.segmento) restantes = restantes.filter(x => (x.segmento || x.linhaProduto || '') === S.segmento);
+    if (S.soLancamento) restantes = restantes.filter(x => x.lancamento);
+    if (S.semST) restantes = restantes.filter(x => !x.temST);
+    if (S.faixaPreco) {
+      const [de, ate] = S.faixaPreco.split('-').map(Number);
+      restantes = restantes.filter(x => x.preco >= de && (!ate || x.preco < ate));
+    }
+    if (!restantes.length) continue;
+    const recorte = restantes.length === cores.length ? vista : { ...card, cores: restantes };
+
+    if (!q) { saida.push(recorte); continue; }
 
     // Só compara código quando o termo TEM dígito. Sem essa guarda,
     // `q.replace(/\D/g,'')` virava string vazia para qualquer busca por nome, e
     // `'123'.includes('')` é sempre true — ou seja, digitar "BAHIA" devolvia o
     // catálogo inteiro, como se a busca não existisse.
     const digitos = q.replace(/\D/g, '');
-    const bateu = cores.some(x =>
+    const bateu = restantes.some(x =>
       (x.nome||'').toLowerCase().includes(q) ||
       (digitos !== '' && String(x.codigo).includes(digitos)) ||
       String(x.codigoOriginal||'').toLowerCase().includes(q) ||
       (x.ean ? String(x.ean).includes(q) : false)
     );
-    if (bateu) saida.push(vista);
+    if (bateu) saida.push(recorte);
   }
 
   return saida;
@@ -817,19 +949,63 @@ function corAtual(card) {
   return card.cores.find(c => c.codigo === cod) || card.cores[0];
 }
 
-function desenhar() {
+/**
+ * Quantos cards a grade desenha de uma vez.
+ *
+ * A tela desenhava TODOS os produtos filtrados num innerHTML só. Com 1.558 da
+ * Samsonite já pesa; com os 4 mil da Yin's o celular do cliente trava antes de
+ * mostrar qualquer coisa. Agora desenha por partes: a primeira leva aparece na
+ * hora e o resto entra conforme a rolagem.
+ */
+const POR_LEVA = 60;
+
+function desenhar(manterPosicao) {
   const lista = filtrados();
+  S.ultimaLista = lista;
+  if (!manterPosicao) S.mostrando = 0;
+  S.mostrando = Math.min(Math.max(S.mostrando, POR_LEVA), lista.length);
+
   $('titulo').textContent = S.linha || S.categoria || 'Catálogo';
-  $('conta').textContent = `${lista.length} produtos`;
+  $('conta').textContent = lista.length > S.mostrando
+    ? `${S.mostrando} de ${lista.length} produtos`
+    : `${lista.length} produtos`;
   document.body.classList.toggle('lista', S.modoLista);
   $('btn-lista').textContent = S.modoLista ? 'Vitrine' : 'Lista';
   $('chip-disponivel').classList.toggle('ativo', S.soDisponivel);
+  atualizarChipsExtra();
 
   desenharDestaque();
 
   $('vazio').style.display = lista.length ? 'none' : 'block';
-  $('grade').innerHTML = lista.map(cardHtml).join('');
+  const parte = lista.slice(0, S.mostrando);
+  $('grade').innerHTML = parte.map(cardHtml).join('')
+    + (lista.length > S.mostrando
+      ? `<div class="ver-mais"><button id="btn-mais">Ver mais ${
+          Math.min(POR_LEVA, lista.length - S.mostrando)} de ${lista.length - S.mostrando}</button></div>`
+      : '');
   ligarEventosGrade();
+
+  const mais = $('btn-mais');
+  if (mais) mais.onclick = () => { S.mostrando += POR_LEVA; desenhar(true); };
+}
+
+/**
+ * Rolar até o fim traz a próxima leva sozinho. O botão continua ali para quem
+ * prefere clicar (e para o teclado), mas ninguém precisa procurar por ele.
+ */
+function ligarRolagemInfinita() {
+  let ocupado = false;
+  window.addEventListener('scroll', () => {
+    if (ocupado) return;
+    const lista = S.ultimaLista || [];
+    if (S.mostrando >= lista.length) return;
+    const faltando = document.body.scrollHeight - (window.scrollY + window.innerHeight);
+    if (faltando > 600) return;
+    ocupado = true;
+    S.mostrando += POR_LEVA;
+    desenhar(true);
+    setTimeout(() => { ocupado = false; }, 120);
+  }, { passive: true });
 }
 
 function desenharDestaque() {
@@ -865,11 +1041,23 @@ function cardHtml(card) {
   const excedeu = qtd && Number(qtd) > c.limite;
   const temCores = card.cores.length > 1;
 
+  // Marca que trabalha por tarja (Yin's) mostra a tarja da fábrica, com as
+  // palavras da fábrica. Traduzir "REDUZIDO" para "pouco estoque" seria
+  // inventar precisão que o catálogo não dá.
+  const porTarja = !!(S.dados && S.dados.saldoPorSituacao);
+  const tarja = (c.situacaoEstoque || '').toUpperCase();
+  const seloTarja = !porTarja ? '' :
+    tarja === 'ZERADO' ? '<span class="selo sem">ZERADO</span>' :
+    tarja === 'REDUZIDO' ? '<span class="selo reduzido">ESTOQUE REDUZIDO</span>' :
+    tarja === 'PRE-VENDA' ? '<span class="selo prevenda">PRÉ-VENDA</span>' : '';
+
   const selos = [
     card.curvaA ? '<span class="selo a">CURVA A</span>' : '',
     card.outlet ? '<span class="selo out">OUTLET</span>' : '',
-    c.semEstoque ? '<span class="selo sem">SEM ESTOQUE</span>' : '',
-    !c.disponivel && !c.semEstoque ? '<span class="selo prog">PROGRAMADO</span>' : '',
+    c.lancamento ? '<span class="selo a">LANÇAMENTO</span>' : '',
+    seloTarja,
+    !porTarja && c.semEstoque ? '<span class="selo sem">SEM ESTOQUE</span>' : '',
+    !porTarja && !c.disponivel && !c.semEstoque ? '<span class="selo prog">PROGRAMADO</span>' : '',
   ].join('');
 
   const foto = c.imagem
@@ -881,11 +1069,40 @@ function cardHtml(card) {
   //   sem saldo, com previsão -> quando chega (dá para reservar)
   //   sem saldo, sem previsão -> só "indisponível"; prometer "chega em breve"
   //                              sem ter data é promessa que ninguém fez.
-  const estoque = c.disponivel
-    ? `<div class="estoque ok">${c.estoque.toLocaleString('pt-BR')} disponíveis</div>`
-    : c.semEstoque
-      ? '<div class="estoque" style="color:#6B6B70">Indisponível no momento</div>'
-      : `<div class="estoque prog">Chega em ${escapar((c.chegadas[0]||{}).rotulo || 'breve')} · ${c.previsto.toLocaleString('pt-BR')} peças</div>`;
+  const estoque = porTarja
+    ? (tarja === 'ZERADO'
+        ? '<div class="estoque" style="color:#6B6B70">Zerado na fábrica</div>'
+        : tarja === 'REDUZIDO'
+          ? '<div class="estoque" style="color:#B35B00">Estoque reduzido</div>'
+          : tarja === 'PRE-VENDA'
+            ? '<div class="estoque prog">Pré-venda</div>'
+            : '<div class="estoque ok">Estoque regular</div>')
+    : c.disponivel
+      ? `<div class="estoque ok">${c.estoque.toLocaleString('pt-BR')} disponíveis</div>`
+      : c.semEstoque
+        ? '<div class="estoque" style="color:#6B6B70">Indisponível no momento</div>'
+        : `<div class="estoque prog">Chega em ${escapar((c.chegadas[0]||{}).rotulo || 'breve')} · ${c.previsto.toLocaleString('pt-BR')} peças</div>`;
+
+  // Imposto embaixo do preço, com as palavras do catálogo: o IPI tem
+  // percentual, o ST não (varia por estado). Item sem nada escrito sai como
+  // "sem IPI" — o silêncio do catálogo também é informação.
+  const impostos = !(S.dados && S.dados.precoEhCusto) ? '' : (() => {
+    const partes = [];
+    partes.push(c.ipi === null || c.ipi === undefined
+      ? 'sem IPI'
+      : `+ ${String(c.ipi).replace('.', ',')}% IPI`);
+    if (c.temST) partes.push('+ ST');
+    return `<div class="imposto">${partes.join(' · ')}</div>`;
+  })();
+
+  // Unidade de venda: quem digita 24 achando que são peças, num item vendido em
+  // embalagem de 12, está pedindo 288.
+  const unidade = (!c.unidadeVenda || c.unidadeVenda === 'peça') && !c.pedidoMinimo ? '' : `
+    <div class="unidade-venda">
+      ${c.unidadeVenda && c.unidadeVenda !== 'peça' ? `vendido por <b>${escapar(c.unidadeVenda)}</b>` : 'vendido por <b>peça</b>'}
+      ${c.embalagem ? ` de ${escapar(c.embalagem)}` : ''}
+      ${c.pedidoMinimo ? ` · mínimo <b>${c.pedidoMinimo}</b>` : ''}
+    </div>`;
 
   const cores = temCores ? `<div class="cores">${card.cores.map(x => `
       <button class="cor${x.codigo===c.codigo?' ativa':''}" data-card="${card.chave}" data-cor="${x.codigo}"
@@ -952,7 +1169,10 @@ function cardHtml(card) {
     <div class="nome">${escapar(card.nome)}</div>
     ${c.cor ? `<div class="cod" style="margin:-4px 0 6px">${escapar(c.cor)}</div>` : ''}
     ${cores}
-    <div class="linha-preco"><span class="preco">${dinheiro(c.preco)}</span><span class="unidade">por unidade</span></div>
+    <div class="linha-preco"><span class="preco">${dinheiro(c.preco)}</span><span class="unidade">${
+      S.dados && S.dados.precoEhCusto ? 'custo' : 'por unidade'}</span></div>
+    ${impostos}
+    ${unidade}
     ${estoque}
     ${controles}
     ${verCores}
@@ -1480,6 +1700,8 @@ $('chip-disponivel').addEventListener('click', () => {
   montarMenu();   // as contas do menu acompanham o filtro
   desenhar();
 });
+ligarFiltrosExtra();
+ligarRolagemInfinita();
 $('btn-carrinho').addEventListener('click', () => $('carrinho').classList.toggle('aberto'));
 $('fechar-carrinho').addEventListener('click', () => $('carrinho').classList.remove('aberto'));
 $('btn-limpar').addEventListener('click', () => {

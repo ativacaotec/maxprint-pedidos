@@ -350,6 +350,7 @@ async function abaImportar() {
 
   const marcas = await api('/api/admin/marcas').catch(() => []);
   const temSamsonite = marcas.some(m => m.slug === 'samsonite');
+  const temYins = marcas.some(m => m.slug === 'yins');
 
   // Bases guardadas de cada marca. A regra vale para todas: o arquivo que você
   // subiu por último continua valendo até você mesmo mandar substituir.
@@ -507,6 +508,46 @@ async function abaImportar() {
       <div id="resultado-sam-revisar"></div>
     </div>`}
 
+    ${!temYins ? '' : `
+    <div class="painel">
+      <h2>Yin's</h2>
+      <p class="d">Aqui o <b>catálogo em PDF é a base</b>: código, descrição, custo, imposto e a
+         situação de estoque saem todos dele — não existe planilha. Cada PDF vira uma tabela
+         (Papelaria, Mochilas, Volta às Aulas...) no menu do cliente, e as seções do sumário de
+         cada catálogo viram as linhas. <b>O que você subir fica guardado</b> e continua valendo
+         até subir de novo.</p>
+      <div class="import">
+        <div class="caixa-import">
+          <h3>Catálogos em PDF</h3>
+          <p>Pode subir vários de uma vez. Um catálogo de 500 páginas leva alguns minutos:
+             cada página é lida por posição e conferida contra a imagem, para descartar
+             preço e código invisíveis que sobram das versões anteriores do material.</p>
+          <input type="file" id="f-yins" accept=".pdf" multiple>
+          <label for="f-yins">Escolher PDFs</label>
+          <div class="arqs" id="a-yins">${resumoBase('yins', 'base', 'itens')}</div>
+        </div>
+
+        <div class="caixa-import" style="border-style:solid;background:var(--claro)">
+          <h3>Situação hoje</h3>
+          <p>${contaMarca('yins').produtos} produtos ativos ·
+             ${contaMarca('yins').semFoto} sem foto</p>
+          <button class="primaria" id="b-yins" disabled>Importar Yin's</button>
+          <div class="arqs">A leitura roda no servidor; pode fechar a tela.</div>
+        </div>
+      </div>
+      <div id="resultado-yins"></div>
+
+      ${!guardada('yins', 'base') ? '' : `
+      <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
+      <h2 style="font-size:14px">Refazer o catálogo da Yin's</h2>
+      <p class="d">Sem reler PDF nenhum: reconstrói o catálogo do cliente a partir do que já foi
+         lido (${resumoBase('yins', 'base', 'itens')}). As fotos anexadas à mão continuam onde estão.</p>
+      <div class="solto">
+        <button class="primaria" id="b-yins-recruzar">Refazer catálogo</button>
+      </div>
+      <div id="resultado-yins-recruzar"></div>`}
+    </div>`}
+
     <div class="painel">
       <h2>Histórico de importações</h2>
       <p class="d">Serve para responder "por que esse item sumiu do catálogo".</p>
@@ -530,6 +571,7 @@ async function abaImportar() {
     ligarImportSamsonite(); ligarRecruzarSamsonite(); ligarEstoqueSamsonite();
     ligarBuscaDeFotos(); ligarRevisarFotos();
   }
+  if (temYins) ligarImportYins();
 }
 
 /**
@@ -779,6 +821,92 @@ function ligarImportSamsonite() {
       botao.disabled = false;
     }
   };
+}
+
+/**
+ * Importação da Yin's: sobe os catálogos em PDF e acompanha a leitura.
+ *
+ * A leitura é demorada de propósito — cada página é conferida contra a imagem
+ * renderizada para descartar preço e código invisíveis. Por isso roda em
+ * segundo plano, com a mesma barra de andamento das outras marcas.
+ */
+function ligarImportYins() {
+  const campo = $('f-yins'), botao = $('b-yins');
+  if (!campo || !botao) return;
+  const rotulo = $('a-yins').textContent;
+
+  campo.addEventListener('change', () => {
+    $('a-yins').textContent = campo.files.length
+      ? `${campo.files.length} PDF(s) escolhido(s) — vão substituir o que está guardado`
+      : rotulo;
+    botao.disabled = !campo.files.length;
+  });
+
+  botao.onclick = async () => {
+    const fd = new FormData();
+    for (const f of campo.files) fd.append('pdfs', f);
+    botao.disabled = true;
+    $('resultado-yins').innerHTML = '<div class="aviso">Enviando os catálogos...</div>';
+    try {
+      const { tarefa } = await api('/api/importacao/yins', { method: 'POST', body: fd });
+      acompanharYins(tarefa);
+    } catch (e) {
+      $('resultado-yins').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      botao.disabled = false;
+    }
+  };
+
+  const refazer = $('b-yins-recruzar');
+  if (refazer) refazer.onclick = async () => {
+    refazer.disabled = true;
+    $('resultado-yins-recruzar').innerHTML = '<div class="aviso">Refazendo o catálogo...</div>';
+    try {
+      const { relatorio } = await api('/api/importacao/yins/recruzar', { method: 'POST' });
+      $('resultado-yins-recruzar').innerHTML = `<div class="aviso">
+        Catálogo refeito: <b>${relatorio.ativos} itens no ar</b>, ${relatorio.comFoto} com foto.</div>`;
+      setTimeout(() => location.reload(), 2500);
+    } catch (e) {
+      $('resultado-yins-recruzar').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      refazer.disabled = false;
+    }
+  };
+}
+
+async function acompanharYins(id) {
+  const alvo = $('resultado-yins');
+  if (!alvo) return;
+  let t;
+  try { t = await api('/api/importacao/samsonite/status/' + id); }
+  catch (e) { alvo.innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`; return; }
+
+  if (t.estado === 'rodando') {
+    alvo.innerHTML = `<div class="aviso">
+      <b>Lendo os catálogos da Yin's...</b> ${esc(t.etapa)}
+      <div style="background:#E5E5E7;border-radius:20px;height:7px;margin-top:9px;overflow:hidden">
+        <div style="background:var(--laranja);height:100%;width:${t.progresso||0}%;transition:width .4s"></div>
+      </div>
+      <div style="font-size:11.5px;color:var(--cinza);margin-top:6px">
+        Pode sair desta tela; a leitura continua no servidor.</div></div>`;
+    setTimeout(() => acompanharYins(id), 3000);
+    return;
+  }
+  if (t.estado === 'erro') {
+    alvo.innerHTML = `<div class="aviso erro"><b>A leitura falhou.</b><br>${esc(t.erro)}</div>`;
+    const b = $('b-yins'); if (b) b.disabled = false;
+    return;
+  }
+
+  const r = t.relatorio || {};
+  const sit = Object.entries(r.porSituacao || {}).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(' · ');
+  alvo.innerHTML = `<div class="aviso">
+    <b>${r.total || 0} itens lidos</b> em ${r.catalogos || 0} catálogos e ${r.segmentos || 0} seções.<br>
+    ${r.comFoto || 0} com foto · ${r.semFoto || 0} sem foto · ${r.semPreco || 0} sem preço legível.<br>
+    ${sit ? `Situação: ${esc(sit)}.<br>` : ''}
+    ${r.desativados ? `${r.desativados} itens saíram do ar por não estarem mais nos catálogos.<br>` : ''}
+    ${(t.avisos || []).length ? `<div style="font-size:11.5px;color:var(--cinza);margin-top:8px">
+      ${t.avisos.slice(0, 8).map(esc).join('<br>')}</div>` : ''}
+  </div>`;
+  setTimeout(() => location.reload(), 4000);
 }
 
 /**
