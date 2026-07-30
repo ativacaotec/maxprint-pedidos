@@ -528,6 +528,29 @@ async function abaImportar() {
       <div id="resultado-max-fotos"></div>
       <div id="resultado-max-revisar"></div>
 
+      <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
+      <h2 style="font-size:14px">Fotos da linha Logitech pela loja da Logitech</h2>
+      <p class="d">A Logitech vem dentro da base da Maxprint, mas <b>não existe no site da Maxprint</b> —
+         por isso a busca de cima volta de mãos vazias para ela. Esta aqui procura na loja oficial
+         <b>logitechstore.com.br</b>, onde cada página traz o part number (910-007049, 920-004431)
+         à mostra: o mesmo código da nossa base, só que com hífen.
+         Conferido em 30/07/2026: 29 itens Logitech na base, 27 sem foto, e <b>25 deles estão na loja</b>.
+         Os 4 que faltam (M170 cinza, M110 cinza, entre outros) a loja não vende — esses só pela
+         foto anexada à mão no catálogo.</p>
+      <div class="solto">
+        <div class="campo"><label>O que refazer</label>
+          <select id="logi-fotos-escopo">
+            <option value="nao">Só quem está sem foto ou com foto repetida</option>
+            <option value="sim">Toda a linha Logitech (refaz até o que já tem foto própria)</option>
+          </select></div>
+        <button class="primaria" id="b-logi-fotos">Buscar fotos na loja da Logitech</button>
+      </div>
+      <div class="aviso" style="margin-top:0">
+        A loja tem cerca de 585 produtos e a varredura visita as páginas <b>uma a uma, com pausa</b>:
+        uns 12 minutos. Pode fechar a tela: continua rodando no servidor.
+      </div>
+      <div id="resultado-logi-fotos"></div>
+
       ${tabelaDeBases('maxprint')}
     </div>
 
@@ -772,6 +795,33 @@ function ligarFotosMaxprint() {
 
   const revisar = $('b-max-revisar');
   if (revisar) revisar.onclick = () => faxinaDeFotos('maxprint', 'resultado-max-revisar', revisar);
+
+  ligarFotosLogitech();
+}
+
+/**
+ * A linha Logitech tem loja própria, e é lá que estão as fotos dela. O botão é
+ * separado do da Maxprint porque são dois sites, dois tempos de varredura e
+ * dois relatórios — misturar faria um esconder o resultado do outro.
+ */
+function ligarFotosLogitech() {
+  const botao = $('b-logi-fotos');
+  if (!botao) return;
+
+  botao.onclick = async () => {
+    botao.disabled = true;
+    $('resultado-logi-fotos').innerHTML = '<div class="aviso">Começando a varredura na loja da Logitech...</div>';
+    try {
+      const { tarefa } = await api('/api/importacao/logitech/fotos', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ todos: $('logi-fotos-escopo').value }),
+      });
+      acompanharFotosMarca(tarefa, 'resultado-logi-fotos', botao, 'Logitech');
+    } catch (e) {
+      $('resultado-logi-fotos').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      botao.disabled = false;
+    }
+  };
 }
 
 /** Acompanhamento de qualquer busca de fotos, seja de que marca for. */

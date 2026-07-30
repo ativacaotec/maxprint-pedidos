@@ -410,6 +410,9 @@ main{ flex:1; padding:18px 20px 150px; min-width:0; }
       <!-- Filtros extras. Só aparecem na marca que tem o dado correspondente:
            com 4 mil itens da Yin's, rolar a grade inteira não é navegação. -->
       <div class="filtros-extra" id="filtros-extra" style="display:none">
+        <!-- Fabricante: múltipla escolha. A base da Maxprint carrega a linha
+             Logitech junto, e dá para marcar um, o outro ou os dois. -->
+        <span id="f-fabricante" style="display:none"></span>
         <select class="seletor" id="f-situacao"></select>
         <select class="seletor" id="f-segmento"></select>
         <select class="seletor" id="f-preco"></select>
@@ -498,6 +501,9 @@ const S = {
   faixaPreco: '',
   soLancamento: false,
   semST: false,
+  // Fabricantes marcados. Vazio = todos, que é o mesmo resultado de marcar
+  // todos — por isso não existe estado "nenhum produto".
+  fabricantes: new Set(),
   mostrando: 0,
   modoLista: false,
   condicao: '30',
@@ -597,6 +603,9 @@ async function trocarMarca(slug) {
   S.categoria = null; S.linha = null; S.busca = ''; $('busca').value = '';
   S.corEscolhida = {};
   S.condicao = '30';
+  S.situacao = ''; S.segmento = ''; S.faixaPreco = '';
+  S.soLancamento = false; S.semST = false;
+  S.fabricantes.clear();
 
   restaurar();                    // e traz o carrinho da marca que estou entrando
   desenharAbasMarca();
@@ -746,16 +755,58 @@ function montarFiltrosExtra() {
   }
   const c = sel('f-preco', 'Faixa de custo: toda', faixas, S.faixaPreco);
 
+  const d = montarChipsFabricante();
+
   $('chip-lancamento').style.display = temLancamento ? '' : 'none';
   $('chip-semimposto').style.display = temST ? '' : 'none';
-  caixa.style.display = (a || b || c || temLancamento || temST) ? 'flex' : 'none';
+  caixa.style.display = (a || b || c || d || temLancamento || temST) ? 'flex' : 'none';
+}
+
+/**
+ * Um chip por fabricante, de marcar vários.
+ *
+ * Só aparece quando a base tem mais de um: a Maxprint distribui a linha
+ * Logitech, e no catálogo os dois vinham misturados sem jeito de separar. Marcar
+ * os dois é o mesmo que não marcar nenhum — a tela mostra tudo.
+ */
+function montarChipsFabricante() {
+  const caixa = $('f-fabricante');
+  const lista = (S.dados && S.dados.fabricantes) || [];
+  if (!caixa) return false;
+  if (lista.length < 2) { caixa.style.display = 'none'; caixa.innerHTML = ''; return false; }
+
+  caixa.style.display = '';
+  caixa.innerHTML = lista.map(f =>
+    `<span class="chip chip-fab${S.fabricantes.has(f.nome) ? ' ativo' : ''}"
+           data-fab="${escapar(f.nome)}">${escapar(f.nome)} (${f.quantos})</span>`).join(' ');
+
+  caixa.querySelectorAll('.chip-fab').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const nome = chip.dataset.fab;
+      if (S.fabricantes.has(nome)) S.fabricantes.delete(nome);
+      else S.fabricantes.add(nome);
+      // Marcar todos é o mesmo que não filtrar; deixar o Set cheio só faria a
+      // conta rodar à toa em cada card.
+      if (S.fabricantes.size === lista.length) S.fabricantes.clear();
+      S.mostrando = 0;
+      montarChipsFabricante(); montarMenu(); desenhar(); atualizarChipsExtra();
+      window.scrollTo({ top: 0 });
+    });
+  });
+  return true;
+}
+
+/** Passa no filtro de fabricante? Set vazio = todo mundo passa. */
+function doFabricante(x) {
+  return !S.fabricantes.size || S.fabricantes.has(x.fabricante);
 }
 
 function atualizarChipsExtra() {
   const l = $('chip-lancamento'), st = $('chip-semimposto'), limpar = $('chip-limpar');
   if (l) l.classList.toggle('ativo', S.soLancamento);
   if (st) st.classList.toggle('ativo', S.semST);
-  const algum = S.situacao || S.segmento || S.faixaPreco || S.soLancamento || S.semST || S.soDisponivel;
+  const algum = S.situacao || S.segmento || S.faixaPreco || S.soLancamento || S.semST
+    || S.soDisponivel || S.fabricantes.size;
   if (limpar) limpar.style.display = algum ? '' : 'none';
 }
 
@@ -769,6 +820,7 @@ function ligarFiltrosExtra() {
   $('chip-limpar').addEventListener('click', () => {
     S.situacao = ''; S.segmento = ''; S.faixaPreco = '';
     S.soLancamento = false; S.semST = false; S.soDisponivel = false;
+    S.fabricantes.clear();
     montarFiltrosExtra(); trocou();
   });
 }
@@ -781,13 +833,16 @@ function montarMenu() {
   // Com "só com saldo" ligado, a conta do menu também é só do que tem saldo.
   // Número do menu que não bate com o que a grade mostra vira dúvida honesta:
   // "sumiu produto?".
-  const conta = (x) => !S.soDisponivel || x.disponivel;
+  const conta = (x) => (!S.soDisponivel || x.disponivel) && doFabricante(x);
   const contar = (f) => S.cards.reduce((a,c) => a + c.cores.filter(x => conta(x) && f(x)).length, 0);
 
   cont.push('<h3>Categorias</h3>');
   cont.push(link(null, null, 'Todos os produtos', contar(() => true)));
   for (const cat of S.dados.categorias) {
     const n = contar(x => x.categoria === cat);
+    // Com fabricante marcado, categoria que ficou em zero só atrapalha: são as
+    // categorias do outro fabricante, e elas não abrem nada.
+    if (!n && S.fabricantes.size) continue;
     cont.push(link(cat, null, cat, n));
     if (S.categoria === cat) {
       for (const l of (S.dados.linhas[cat] || [])) {
@@ -813,11 +868,12 @@ function montarMenu() {
 /** Mesma navegação do menu lateral, num seletor — é o que cabe no celular. */
 function montarFiltroCelular() {
   const sel = $('filtro-celular');
-  const conta = (x) => !S.soDisponivel || x.disponivel;
+  const conta = (x) => (!S.soDisponivel || x.disponivel) && doFabricante(x);
   const total = S.cards.reduce((a,c) => a + c.cores.filter(conta).length, 0);
   const opcoes = [`<option value="">Todos os produtos (${total})</option>`];
   for (const cat of S.dados.categorias) {
     const n = S.cards.reduce((a,c) => a + c.cores.filter(x => conta(x) && x.categoria === cat).length, 0);
+    if (!n && S.fabricantes.size) continue;
     opcoes.push(`<option value="${escapar(cat)}"${S.categoria===cat&&!S.linha?' selected':''}>${escapar(cat)} (${n})</option>`);
     for (const l of (S.dados.linhas[cat] || [])) {
       const n2 = S.cards.reduce((a,c) => a + c.cores.filter(x => conta(x) && x.categoria === cat && x.linhaProduto === l).length, 0);
@@ -909,6 +965,7 @@ function filtrados() {
     // ALGUMA cor dele passa — filtrar por card inteiro esconderia a cor certa
     // junto com a errada, que foi o erro do "só com saldo" antes.
     let restantes = cores;
+    if (S.fabricantes.size) restantes = restantes.filter(doFabricante);
     if (S.situacao) restantes = restantes.filter(x => (x.situacaoEstoque || '') === S.situacao);
     if (S.segmento) restantes = restantes.filter(x => (x.segmento || x.linhaProduto || '') === S.segmento);
     if (S.soLancamento) restantes = restantes.filter(x => x.lancamento);
