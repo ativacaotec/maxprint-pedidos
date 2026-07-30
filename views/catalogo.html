@@ -378,7 +378,7 @@ main{ flex:1; padding:18px 20px 150px; min-width:0; }
   <div class="busca">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
       <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input id="busca" placeholder="Buscar por código, nome ou EAN" autocomplete="off">
+    <input id="busca" placeholder="Buscar por código, nome, cor ou referência" autocomplete="off">
   </div>
   <div class="espaco"></div>
   <button class="btn-topo" id="btn-lista" title="Alternar entre vitrine e lista compacta">Lista</button>
@@ -942,8 +942,67 @@ function montarCondicoes() {
 /* ==================================================================
    Desenho da grade
    ================================================================== */
+/**
+ * Texto sem acento e em minúscula.
+ *
+ * Quem procura digita "caneta marca texto", "mochila costas", "estojo" — sem
+ * acento e sem paciência. Comparar do jeito que veio do catálogo faria
+ * "CAÇAMBA" não achar "cacamba" e "LÁPIS" não achar "lapis".
+ */
+function semAcento(t) {
+  return String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+/**
+ * Tudo o que pode ser procurado num item, junto num texto só.
+ *
+ * A busca é a mesma para as três marcas, mas cada uma guarda a informação num
+ * campo diferente: a Samsonite tem cor, sub-marca e grupo; a Yin's tem a
+ * referência da fábrica, o catálogo de origem e a seção; a Maxprint tem o EAN.
+ * Em vez de três buscas, um texto só com o que cada marca tiver.
+ */
+function textoDoItem(x) {
+  if (x.__busca === undefined) {
+    x.__busca = semAcento([
+      x.nome, x.codigo, x.codigoOriginal, x.ean, x.ref,
+      x.cor, x.subMarca, x.grupo, x.tipoProduto,
+      x.categoria, x.linhaProduto, x.segmento, x.catalogoNome, x.fabricante,
+    ].filter(Boolean).join(' '));
+  }
+  return x.__busca;
+}
+
+/**
+ * O item atende o que foi digitado?
+ *
+ * Cada palavra digitada precisa aparecer em algum lugar do item — assim
+ * "mochila azul" acha a mochila azul sem depender da ordem das palavras, e
+ * "caneta 70000132" acha pelo nome e pelo código ao mesmo tempo.
+ *
+ * O código é comparado só por dígitos, e só quando o termo TEM dígito. Sem
+ * essa guarda, `q.replace(/\D/g,'')` virava string vazia para qualquer busca
+ * por nome, e `'123'.includes('')` é sempre true — digitar "BAHIA" devolvia o
+ * catálogo inteiro, como se a busca não existisse.
+ */
+function itemBate(x, termos) {
+  const texto = textoDoItem(x);
+  return termos.every((t) => {
+    if (texto.includes(t.palavra)) return true;
+    if (!t.digitos) return false;
+    return String(x.codigo || '').includes(t.digitos)
+      || String(x.codigoOriginal || '').replace(/\D/g, '').includes(t.digitos)
+      || String(x.ean || '').includes(t.digitos);
+  });
+}
+
+function termosDaBusca(q) {
+  return semAcento(q).split(/\s+/).filter(Boolean)
+    .map((palavra) => ({ palavra, digitos: palavra.replace(/\D/g, '') }));
+}
+
 function filtrados() {
-  const q = S.busca.trim().toLowerCase();
+  const q = S.busca.trim();
+  const termos = q ? termosDaBusca(q) : [];
   const saida = [];
 
   for (const card of S.cards) {
@@ -957,9 +1016,15 @@ function filtrados() {
     // Card recortado só para esta exibição; o S.cards original fica intacto.
     const vista = cores.length === card.cores.length ? card : { ...card, cores };
 
+    // Procurando, a categoria aberta no menu sai da frente: quem digita um
+    // código quer achá-lo, e não descobrir que ele estava em outra categoria.
+    // Procurar dentro de PAPELARIA por um código da informática devolvia nada,
+    // e a tela não explicava por quê.
     const c = corAtual(vista);
-    if (S.categoria && c.categoria !== S.categoria) continue;
-    if (S.linha && c.linhaProduto !== S.linha) continue;
+    if (!termos.length) {
+      if (S.categoria && c.categoria !== S.categoria) continue;
+      if (S.linha && c.linhaProduto !== S.linha) continue;
+    }
 
     // Filtros extras, aplicados sobre as cores que sobraram. Um card entra se
     // ALGUMA cor dele passa — filtrar por card inteiro esconderia a cor certa
@@ -975,22 +1040,19 @@ function filtrados() {
       restantes = restantes.filter(x => x.preco >= de && (!ate || x.preco < ate));
     }
     if (!restantes.length) continue;
-    const recorte = restantes.length === cores.length ? vista : { ...card, cores: restantes };
 
-    if (!q) { saida.push(recorte); continue; }
+    // A busca recorta a COR, não só o card. Procurar 70000132 (a laranja) num
+    // card de seis cores mostrava o card aberto na primeira cor — a azul — e
+    // quem procurou achava que tinha achado outro item. Se a busca casa com
+    // algumas cores, o card entra só com elas; se casa com todas (busca por
+    // nome de linha), nada muda.
+    if (termos.length) {
+      const acertos = restantes.filter((x) => itemBate(x, termos));
+      if (!acertos.length) continue;
+      restantes = acertos;
+    }
 
-    // Só compara código quando o termo TEM dígito. Sem essa guarda,
-    // `q.replace(/\D/g,'')` virava string vazia para qualquer busca por nome, e
-    // `'123'.includes('')` é sempre true — ou seja, digitar "BAHIA" devolvia o
-    // catálogo inteiro, como se a busca não existisse.
-    const digitos = q.replace(/\D/g, '');
-    const bateu = restantes.some(x =>
-      (x.nome||'').toLowerCase().includes(q) ||
-      (digitos !== '' && String(x.codigo).includes(digitos)) ||
-      String(x.codigoOriginal||'').toLowerCase().includes(q) ||
-      (x.ean ? String(x.ean).includes(q) : false)
-    );
-    if (bateu) saida.push(recorte);
+    saida.push(restantes.length === cores.length ? vista : { ...card, cores: restantes });
   }
 
   return saida;
@@ -1022,10 +1084,18 @@ function desenhar(manterPosicao) {
   if (!manterPosicao) S.mostrando = 0;
   S.mostrando = Math.min(Math.max(S.mostrando, POR_LEVA), lista.length);
 
-  $('titulo').textContent = S.linha || S.categoria || 'Catálogo';
-  $('conta').textContent = lista.length > S.mostrando
+  // Procurando, o título diz o que está na tela. Sem isso a categoria antiga
+  // continuava escrita em cima de um resultado que veio do catálogo inteiro.
+  const procurando = S.busca.trim();
+  $('titulo').textContent = procurando
+    ? `Busca: ${procurando}`
+    : (S.linha || S.categoria || 'Catálogo');
+  const achados = lista.length > S.mostrando
     ? `${S.mostrando} de ${lista.length} produtos`
     : `${lista.length} produtos`;
+  $('conta').textContent = procurando && (S.categoria || S.linha)
+    ? `${achados} · procurei em todo o catálogo`
+    : achados;
   document.body.classList.toggle('lista', S.modoLista);
   $('btn-lista').textContent = S.modoLista ? 'Vitrine' : 'Lista';
   $('chip-disponivel').classList.toggle('ativo', S.soDisponivel);
