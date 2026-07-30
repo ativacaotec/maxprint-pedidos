@@ -639,19 +639,6 @@ router.post(
 
 const { importarCatalogoYins } = require('../lib/importCatalogoYins');
 
-/** Nome da tabela a partir do arquivo: "TABELA_YINS_KIDS_2026 2.pdf" -> "Yins Kids". */
-function tituloDoArquivo(nomeArquivo) {
-  return String(nomeArquivo || '')
-    .replace(/\.pdf$/i, '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\bcompress(ed|ado)\b/gi, '')
-    .replace(/\bcompactado\b/gi, '')
-    .replace(/\btabela\b/gi, '')
-    .replace(/\b\d{1,2}\b(?=\s*$)/, '')
-    .replace(/\s+/g, ' ')
-    .trim() || 'Catálogo';
-}
-
 async function rodarImportacaoYins(id, arquivos, opcoes) {
   const MARCA = 'yins';
   const inicio = Date.now();
@@ -667,9 +654,12 @@ async function rodarImportacaoYins(id, arquivos, opcoes) {
     const porCatalogo = [];
 
     for (const [i, f] of arquivos.entries()) {
-      const titulo = opcoes.titulos[i] || tituloDoArquivo(f.originalname);
+      // Sem título forçado, quem decide é o cabeçalho do próprio catálogo
+      // (ver lib/importCatalogoYins.tituloDoCatalogo).
+      const titulo = opcoes.titulos[i] || '';
+      const rotulo = titulo || f.originalname;
       marcar(id, {
-        etapa: `lendo ${titulo} (${i + 1} de ${arquivos.length})`,
+        etapa: `lendo ${rotulo} (${i + 1} de ${arquivos.length})`,
         progresso: 2 + Math.round((90 * i) / Math.max(1, arquivos.length)),
       });
       const r = await importarCatalogoYins(f.path, {
@@ -678,7 +668,7 @@ async function rodarImportacaoYins(id, arquivos, opcoes) {
         titulo,
         porConteudo,
         aoAndar: (p) => marcar(id, {
-          etapa: `${titulo}: página ${p.pagina} de ${p.total}, ${p.produtos} itens`,
+          etapa: `${rotulo}: página ${p.pagina} de ${p.total}, ${p.produtos} itens`,
           progresso: 2 + Math.round((90 * (i + p.pagina / Math.max(1, p.total))) / Math.max(1, arquivos.length)),
         }),
       });
@@ -712,8 +702,8 @@ async function rodarImportacaoYins(id, arquivos, opcoes) {
           ...origemAntes,
           ...arquivos.map((f, i) => ({
             arquivo: f.originalname,
-            titulo: opcoes.titulos[i] || tituloDoArquivo(f.originalname),
-            itens: todos.filter((p) => p.catalogo === (opcoes.titulos[i] || tituloDoArquivo(f.originalname))).length,
+            titulo: porCatalogo[i] ? porCatalogo[i].catalogo : f.originalname,
+            itens: porCatalogo[i] ? porCatalogo[i].produtos : 0,
             em: new Date(),
           })),
         ],
