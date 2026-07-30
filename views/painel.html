@@ -167,10 +167,34 @@ const $ = (id) => document.getElementById(id);
 const dinheiro = (v) => Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const data = (d) => new Date(d).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
 const esc = (s) => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+/**
+ * Chamada à API com erro que se explica.
+ *
+ * Antes, qualquer resposta que não fosse JSON virava "Deu erro." na tela — e
+ * "Deu erro" não diz se o arquivo era grande demais, se a sessão caiu ou se o
+ * servidor engasgou. Quando não vem JSON, o que aparece agora é o código HTTP
+ * e o começo da resposta, que é o suficiente para saber onde olhar.
+ */
 const api = async (url, opcoes) => {
-  const r = await fetch(url, opcoes);
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.erro || 'Deu erro.');
+  let r;
+  try {
+    r = await fetch(url, opcoes);
+  } catch (e) {
+    throw new Error(`A conexão caiu no meio do envio (${e.message}). Em arquivo grande, `
+      + 'costuma ser tempo de upload: mande menos arquivos por vez.');
+  }
+  const texto = await r.text().catch(() => '');
+  let d = {};
+  try { d = texto ? JSON.parse(texto) : {}; } catch (_) { d = {}; }
+  if (!r.ok) {
+    if (d.erro) throw new Error(d.erro);
+    const pista = texto.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+    const porTamanho = r.status === 413;
+    throw new Error(
+      `O servidor respondeu ${r.status}${pista ? ' — ' + pista : ''}.`
+      + (porTamanho ? ' Isso é limite de tamanho: mande menos arquivos por vez.' : '')
+    );
+  }
   return d;
 };
 
@@ -835,10 +859,17 @@ function ligarImportYins() {
   if (!campo || !botao) return;
   const rotulo = $('a-yins').textContent;
 
+  // O tamanho aparece na hora. Sete catálogos passam de 150 MB, e mandar tudo
+  // de uma vez depende de o upload aguentar o caminho inteiro — melhor avisar
+  // antes do que descobrir depois de esperar.
+  const LIMITE_MB = 100;
   campo.addEventListener('change', () => {
+    const mb = [...campo.files].reduce((a, f) => a + f.size, 0) / 1024 / 1024;
     $('a-yins').textContent = campo.files.length
-      ? `${campo.files.length} PDF(s) escolhido(s) — vão substituir o que está guardado`
+      ? `${campo.files.length} PDF(s) · ${mb.toFixed(0)} MB`
+        + (mb > LIMITE_MB ? ' — é muito para um envio só, mande 2 ou 3 por vez' : ' — vão substituir essas tabelas')
       : rotulo;
+    $('a-yins').style.color = mb > LIMITE_MB ? 'var(--vermelho)' : '';
     botao.disabled = !campo.files.length;
   });
 
