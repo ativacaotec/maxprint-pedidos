@@ -93,6 +93,37 @@ const MARCAS = [
       { nome: 'Samsonite Red', cor: '#C8102E' },
     ],
   },
+  {
+    slug: 'yins',
+    nome: "Yin's",
+    ativa: true,
+    ordem: 3,
+    corPrimaria: '#1B4B8F',   // azul do logo Yin's
+    corSecundaria: '#F2A900',
+    /**
+     * A Yin's não trabalha com saldo em número: o catálogo publica uma tarja
+     * por item — REGULAR, REDUZIDO, ZERADO ou PRÉ-VENDA. Ver models/Marca.js.
+     */
+    saldoPorSituacao: true,
+    mostrarSemEstoque: true,
+    /**
+     * E o valor impresso é o CUSTO, com o imposto informado à parte: IPI com
+     * percentual, ST sem (varia por estado). A tela escreve o imposto embaixo
+     * do preço em vez de fingir que aquele é o valor final.
+     */
+    precoEhCusto: true,
+    aplicarAcrescimoPrazo: false,
+    // Sem regra de prazo fechada com a fábrica ainda; começa com a condição
+    // mais simples e a aba Marcas do painel ajusta quando o Marcelo definir.
+    condicoesPagamento: [
+      { id: '30', rotulo: '30 dias', parcelas: [30] },
+      { id: '30_60', rotulo: '30/60', parcelas: [30, 60] },
+      { id: '30_60_90', rotulo: '30/60/90', parcelas: [30, 60, 90] },
+    ],
+    condicoesAcimaDeValor: null,
+    pedidoMinimo: null,
+    valorFreteCif: null,
+  },
 ];
 
 async function seedMarcas() {
