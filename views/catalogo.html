@@ -180,6 +180,17 @@ main{ flex:1; padding:18px 20px 150px; min-width:0; }
 .card .toque{ position:absolute; inset:0; cursor:pointer; z-index:1; border-radius:12px; }
 .ver-cores{ font-size:11px; color:var(--laranja); font-weight:700; margin-top:5px; cursor:pointer; }
 
+/* Anexar a foto do item, só para a equipe.
+   A foto certa de cada cor nem sempre existe na loja oficial, e o item fica
+   sem imagem — melhor sem do que com a foto de outra cor. Este botão deixa
+   resolver na hora em que o erro é visto, sem anotar código e ir ao painel. */
+.subir-foto{ display:inline-block; align-self:flex-start; width:fit-content;
+             font-size:10.5px; font-weight:700; color:var(--laranja);
+             border:1px dashed var(--laranja); border-radius:7px; padding:3px 7px;
+             cursor:pointer; margin:0 auto 7px; background:#fff; }
+.subir-foto:hover{ background:#FFF6EA; }
+.subir-foto.ocupado{ opacity:.55; pointer-events:none; }
+
 /* ---------------------------- carrinho ---------------------------- */
 .carrinho{ position:fixed; top:var(--topo); right:0; bottom:64px; width:var(--carrinho);
            background:#fff; border-left:1px solid var(--cinza-borda); display:flex;
@@ -651,10 +662,14 @@ function montarCards(produtos) {
    ================================================================== */
 function montarMenu() {
   const cont = [];
-  const contar = (f) => S.cards.reduce((a,c) => a + c.cores.filter(f).length, 0);
+  // Com "só com saldo" ligado, a conta do menu também é só do que tem saldo.
+  // Número do menu que não bate com o que a grade mostra vira dúvida honesta:
+  // "sumiu produto?".
+  const conta = (x) => !S.soDisponivel || x.disponivel;
+  const contar = (f) => S.cards.reduce((a,c) => a + c.cores.filter(x => conta(x) && f(x)).length, 0);
 
   cont.push('<h3>Categorias</h3>');
-  cont.push(link(null, null, 'Todos os produtos', S.dados.produtos.length));
+  cont.push(link(null, null, 'Todos os produtos', contar(() => true)));
   for (const cat of S.dados.categorias) {
     const n = contar(x => x.categoria === cat);
     cont.push(link(cat, null, cat, n));
@@ -682,12 +697,14 @@ function montarMenu() {
 /** Mesma navegação do menu lateral, num seletor — é o que cabe no celular. */
 function montarFiltroCelular() {
   const sel = $('filtro-celular');
-  const opcoes = [`<option value="">Todos os produtos (${S.dados.produtos.length})</option>`];
+  const conta = (x) => !S.soDisponivel || x.disponivel;
+  const total = S.cards.reduce((a,c) => a + c.cores.filter(conta).length, 0);
+  const opcoes = [`<option value="">Todos os produtos (${total})</option>`];
   for (const cat of S.dados.categorias) {
-    const n = S.cards.reduce((a,c) => a + c.cores.filter(x => x.categoria === cat).length, 0);
+    const n = S.cards.reduce((a,c) => a + c.cores.filter(x => conta(x) && x.categoria === cat).length, 0);
     opcoes.push(`<option value="${escapar(cat)}"${S.categoria===cat&&!S.linha?' selected':''}>${escapar(cat)} (${n})</option>`);
     for (const l of (S.dados.linhas[cat] || [])) {
-      const n2 = S.cards.reduce((a,c) => a + c.cores.filter(x => x.categoria === cat && x.linhaProduto === l).length, 0);
+      const n2 = S.cards.reduce((a,c) => a + c.cores.filter(x => conta(x) && x.categoria === cat && x.linhaProduto === l).length, 0);
       opcoes.push(`<option value="${escapar(cat)}|${escapar(l)}"${S.categoria===cat&&S.linha===l?' selected':''}>
         &nbsp;&nbsp;${escapar(l)} (${n2})</option>`);
     }
@@ -755,24 +772,44 @@ function montarCondicoes() {
    ================================================================== */
 function filtrados() {
   const q = S.busca.trim().toLowerCase();
-  return S.cards.filter(card => {
-    const c = corAtual(card);
-    if (S.categoria && c.categoria !== S.categoria) return false;
-    if (S.linha && c.linhaProduto !== S.linha) return false;
-    if (S.soDisponivel && !card.cores.some(x => x.disponivel)) return false;
-    if (!q) return true;
+  const saida = [];
+
+  for (const card of S.cards) {
+    // "Só com saldo" precisa esconder a COR sem saldo, não só o card em que
+    // nenhuma cor tem saldo. Antes bastava uma cor com estoque para o card
+    // inteiro passar, e o card abria justamente na primeira cor da linha —
+    // que muitas vezes está zerada. Resultado: filtro ligado e "SEM ESTOQUE"
+    // na tela, exatamente o oposto do que o botão promete.
+    const cores = S.soDisponivel ? card.cores.filter(x => x.disponivel) : card.cores;
+    if (!cores.length) continue;
+    // Card recortado só para esta exibição; o S.cards original fica intacto.
+    const vista = cores.length === card.cores.length ? card : { ...card, cores };
+
+    const c = corAtual(vista);
+    if (S.categoria && c.categoria !== S.categoria) continue;
+    if (S.linha && c.linhaProduto !== S.linha) continue;
+    if (!q) { saida.push(vista); continue; }
+
     // Só compara código quando o termo TEM dígito. Sem essa guarda,
     // `q.replace(/\D/g,'')` virava string vazia para qualquer busca por nome, e
     // `'123'.includes('')` é sempre true — ou seja, digitar "BAHIA" devolvia o
     // catálogo inteiro, como se a busca não existisse.
     const digitos = q.replace(/\D/g, '');
-    return card.cores.some(x =>
+    const bateu = cores.some(x =>
       (x.nome||'').toLowerCase().includes(q) ||
       (digitos !== '' && String(x.codigo).includes(digitos)) ||
       String(x.codigoOriginal||'').toLowerCase().includes(q) ||
       (x.ean ? String(x.ean).includes(q) : false)
     );
-  });
+    if (bateu) saida.push(vista);
+  }
+
+  return saida;
+}
+
+/** O card como ele está aparecendo agora, já com o recorte dos filtros. */
+function cardVisivel(chave) {
+  return filtrados().find(c => c.chave === chave) || S.cards.find(c => c.chave === chave);
 }
 
 function corAtual(card) {
@@ -882,6 +919,13 @@ function cardHtml(card) {
     ? `<div class="ver-cores" data-ver-cores="${card.chave}">ver as ${card.cores.length} cores →</div>`
     : '';
 
+  // Item de cor única e sem foto: a equipe resolve aqui mesmo. Quem tem cor
+  // irmã anexa pela janela de cores, que mostra uma a uma.
+  const anexar = (S.dados.admin && !c.imagem && !temCores)
+    ? `<label class="subir-foto">anexar a foto
+        <input type="file" accept="image/*" data-subir="${c.codigo}" style="display:none"></label>`
+    : '';
+
   if (S.modoLista) {
     return `<div class="card${qtd?' tem':''}${c.semEstoque?' sem-estoque':''}" data-card="${card.chave}">
       <div class="foto">${foto}</div>
@@ -912,8 +956,42 @@ function cardHtml(card) {
     ${estoque}
     ${controles}
     ${verCores}
+    ${anexar}
     ${infoExtra ? `<div class="info">${infoExtra}</div>` : ''}
   </div>`;
+}
+
+/**
+ * Anexa a foto de UM item e grava no banco na hora.
+ *
+ * Existe porque a foto certa de cada cor nem sempre está na loja oficial. O
+ * sistema prefere deixar o item sem foto a pendurar nele a foto de outra cor
+ * — e aí quem vê o erro na tela é justamente quem sabe qual é a foto certa.
+ * A imagem vai para o produto (imagemManual), que manda em qualquer outra, e
+ * passa a valer para o catálogo, o PDF do pedido e o Excel.
+ */
+async function enviarFoto(codigo, input, aoTerminar) {
+  const arquivo = input.files && input.files[0];
+  if (!arquivo) return;
+  const rotulo = input.closest('.subir-foto');
+  if (rotulo) { rotulo.classList.add('ocupado'); rotulo.textContent = 'enviando…'; }
+  try {
+    const corpo = new FormData();
+    corpo.append('imagem', arquivo);
+    const r = await fetch(`/api/importacao/foto/${encodeURIComponent(codigo)}?marca=${encodeURIComponent(S.dados.marca)}`,
+      { method: 'POST', body: corpo });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.erro || 'não consegui gravar a foto');
+    // As cores do card apontam para os MESMOS objetos de S.dados.produtos,
+    // então mexer aqui já reflete no card, na janela e no carrinho.
+    const p = S.dados.produtos.find(x => x.codigo === codigo);
+    if (p) { p.imagem = j.imagem; p.imagemIlustrativa = false; }
+    if (aoTerminar) aoTerminar();
+    desenhar();
+  } catch (e) {
+    alert('Não deu para anexar a foto: ' + e.message);
+    if (rotulo) { rotulo.classList.remove('ocupado'); rotulo.textContent = 'anexar a foto'; }
+  }
 }
 
 /**
@@ -922,7 +1000,9 @@ function cardHtml(card) {
  * precisar clicar cor por cor só para saber o que existe.
  */
 function abrirCores(chave) {
-  const card = S.cards.find(c => c.chave === chave);
+  // Com "só com saldo" ligado, a janela mostra as mesmas cores do card —
+  // abrir a lista completa aqui seria desmentir o filtro.
+  const card = cardVisivel(chave);
   if (!card) return;
 
   const desenharJanela = () => {
@@ -939,6 +1019,8 @@ function abrirCores(chave) {
               : '<div class="vazio">sem foto</div>'}</div>
             <div class="nome-cor">${escapar(x.cor || x.nome)}</div>
             <div class="cod">${escapar(x.codigoOriginal || x.codigo)}</div>
+            ${S.dados.admin ? `<label class="subir-foto">${x.imagem ? 'trocar a foto' : 'anexar a foto'}
+              <input type="file" accept="image/*" data-subir="${x.codigo}" style="display:none"></label>` : ''}
             <div class="linha-preco">
               <span class="preco">${dinheiro(x.preco)}</span>
               ${x.emPromocao && x.precoCheio > x.preco
@@ -983,6 +1065,9 @@ function abrirCores(chave) {
     $('janela').querySelectorAll('[data-jmenos]').forEach(b => b.addEventListener('click', () => {
       definirQtd(b.dataset.jmenos, Number(S.carrinho[b.dataset.jmenos] || 0) - 1); mexeu();
     }));
+    $('janela').querySelectorAll('[data-subir]').forEach(i => {
+      i.addEventListener('change', () => enviarFoto(i.dataset.subir, i, desenharJanela));
+    });
   };
 
   desenharJanela();
@@ -1000,6 +1085,9 @@ function ligarEventosGrade() {
   });
   document.querySelectorAll('[data-ver-cores]').forEach(b => {
     b.addEventListener('click', () => abrirCores(b.dataset.verCores));
+  });
+  document.querySelectorAll('#grade [data-subir]').forEach(i => {
+    i.addEventListener('change', () => enviarFoto(i.dataset.subir, i));
   });
   document.querySelectorAll('[data-qtd]').forEach(i => {
     i.addEventListener('input', () => definirQtd(i.dataset.qtd, i.value));
@@ -1387,7 +1475,11 @@ function restaurar() {
    ================================================================== */
 $('busca').addEventListener('input', (e) => { S.busca = e.target.value; desenhar(); });
 $('btn-lista').addEventListener('click', () => { S.modoLista = !S.modoLista; desenhar(); });
-$('chip-disponivel').addEventListener('click', () => { S.soDisponivel = !S.soDisponivel; desenhar(); });
+$('chip-disponivel').addEventListener('click', () => {
+  S.soDisponivel = !S.soDisponivel;
+  montarMenu();   // as contas do menu acompanham o filtro
+  desenhar();
+});
 $('btn-carrinho').addEventListener('click', () => $('carrinho').classList.toggle('aberto'));
 $('fechar-carrinho').addEventListener('click', () => $('carrinho').classList.remove('aberto'));
 $('btn-limpar').addEventListener('click', () => {

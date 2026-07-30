@@ -470,6 +470,18 @@ async function abaImportar() {
         por isso demora de 30 a 60 minutos. Pode fechar a tela: continua rodando no servidor.
       </div>
       <div id="resultado-sam-fotos"></div>
+
+      <div style="border-top:1px solid var(--borda);margin:18px 0 14px"></div>
+      <h2 style="font-size:14px">Revisar fotos repetidas</h2>
+      <p class="d">Tira do catálogo a foto que está pendurada em <b>mais de um item</b> — foto da
+         página inteira do PDF e foto que a loja publicou na página de outra cor. Quando a mesma
+         imagem serve a vários códigos, não dá para dizer de quem ela é, e foto errada é pior que
+         foto faltando: o cliente pede olhando a foto. Os itens ficam <b>sem imagem</b> e você
+         anexa a certa pelo catálogo ou pela aba Produtos. Foto anexada à mão nunca é apagada.</p>
+      <div class="solto">
+        <button class="primaria" id="b-sam-revisar">Revisar fotos repetidas</button>
+      </div>
+      <div id="resultado-sam-revisar"></div>
     </div>`}
 
     <div class="painel">
@@ -491,7 +503,7 @@ async function abaImportar() {
   ligarImport('estoque');
   ligarImport('preco');
   ligarRecruzar();
-  if (temSamsonite) { ligarImportSamsonite(); ligarEstoqueSamsonite(); ligarBuscaDeFotos(); }
+  if (temSamsonite) { ligarImportSamsonite(); ligarEstoqueSamsonite(); ligarBuscaDeFotos(); ligarRevisarFotos(); }
 }
 
 /**
@@ -536,6 +548,62 @@ function ligarBuscaDeFotos() {
       acompanharFotos(tarefa);
     } catch (e) {
       $('resultado-sam-fotos').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      botao.disabled = false;
+    }
+  };
+}
+
+/**
+ * Faxina das fotos repetidas. Roda em dois tempos de propósito: primeiro
+ * mostra o que seria apagado, e só apaga depois de você concordar. Apagar
+ * foto de 800 itens sem avisar seria um susto grande demais.
+ */
+function ligarRevisarFotos() {
+  const botao = $('b-sam-revisar');
+  if (!botao) return;
+  const alvo = $('resultado-sam-revisar');
+
+  const chamar = (aplicar) => api('/api/importacao/fotos/revisar?marca=samsonite', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ aplicar: aplicar ? 'sim' : 'nao' }),
+  });
+
+  botao.onclick = async () => {
+    botao.disabled = true;
+    alvo.innerHTML = '<div class="aviso">Conferindo as fotos...</div>';
+    try {
+      const { relatorio, amostra } = await chamar(false);
+      if (!relatorio.produtosSuspeitos) {
+        alvo.innerHTML = '<div class="aviso">Nenhuma foto repetida. Cada item tem a sua.</div>';
+        botao.disabled = false;
+        return;
+      }
+      alvo.innerHTML = `<div class="aviso">
+        <b>${relatorio.produtosSuspeitos} itens</b> compartilham foto, em
+        ${relatorio.gruposRepetidos} grupos (de ${relatorio.comFoto} itens com imagem hoje).
+        <div style="font-size:12px;color:var(--cinza);margin:8px 0">
+          ${(amostra||[]).slice(0,5).map(g => `${esc(g.motivo)}: ${esc(g.codigos.slice(0,5).join(', '))}`).join('<br>')}
+        </div>
+        <button class="primaria" id="b-sam-revisar-ok">Apagar essas fotos</button>
+        <button id="b-sam-revisar-nao">Deixar como está</button>
+      </div>`;
+      $('b-sam-revisar-nao').onclick = () => { alvo.innerHTML = ''; botao.disabled = false; };
+      $('b-sam-revisar-ok').onclick = async () => {
+        alvo.innerHTML = '<div class="aviso">Apagando...</div>';
+        try {
+          const { relatorio: r } = await chamar(true);
+          alvo.innerHTML = `<div class="aviso">
+            <b>${r.fotosLimpas} fotos apagadas.</b> Agora são ${r.semFotoAgora} itens sem imagem.
+            O próximo "Buscar fotos" procura a foto certa de cada um; o que a loja não tiver,
+            você anexa à mão.</div>`;
+          setTimeout(() => location.reload(), 3500);
+        } catch (e) {
+          alvo.innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+          botao.disabled = false;
+        }
+      };
+    } catch (e) {
+      alvo.innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
       botao.disabled = false;
     }
   };
