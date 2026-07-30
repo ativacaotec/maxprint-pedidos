@@ -53,6 +53,25 @@ async function recruzar() {
   // da Samsonite toda vez que a Maxprint fosse reimportada.
   const MARCA = 'maxprint';
 
+  // Conserto dos produtos anteriores à multimarca.
+  //
+  // Os produtos criados antes de existir o campo `marcaSlug` ficaram SEM ele.
+  // O documento continua ativo no banco, mas nenhuma consulta por marca o
+  // enxerga — nem o catálogo do cliente (`{marcaSlug:'maxprint'}`), nem a busca
+  // do painel, nem o upsert daqui de baixo. Foi assim que a aba Maxprint
+  // apareceu vazia com 453 produtos ativos no banco: eles não estavam
+  // desativados, estavam invisíveis.
+  //
+  // Todo produto sem marca é da Maxprint: a Samsonite já nasceu com o campo
+  // preenchido. Rodar de novo não faz nada, porque depois da primeira vez não
+  // sobra documento sem o campo.
+  const semMarca = await Produto.updateMany(
+    { marcaSlug: { $in: [null, ''] } },
+    { $set: { marcaSlug: MARCA } }
+  );
+  const adotados = semMarca.modifiedCount || semMarca.nModified || 0;
+  if (adotados) console.log(`[recruzar] ${adotados} produto(s) antigos ganharam marcaSlug=${MARCA}`);
+
   // As imagens que o admin subiu à mão sobrevivem ao recruzamento.
   const manuais = await Produto.find({ marcaSlug: MARCA, imagemManual: { $ne: '' } })
     .select('codigo imagemManual').lean();
@@ -85,6 +104,7 @@ async function recruzar() {
 
   relatorio.desativados = await Produto.countDocuments({ marcaSlug: MARCA, ativo: false });
   relatorio.ativos = await Produto.countDocuments({ marcaSlug: MARCA, ativo: true });
+  relatorio.adotados = adotados;
   return relatorio;
 }
 
@@ -638,6 +658,7 @@ const { buscarFotosSamsonite } = require('../lib/buscarFotosSamsonite');
 
 async function rodarBuscaDeFotos(id, opcoes) {
   const MARCA = 'samsonite';
+  let gravadas = 0;
   try {
     marcar(id, { etapa: 'vendo quem está sem foto', progresso: 2 });
 
@@ -663,6 +684,18 @@ async function rodarBuscaDeFotos(id, opcoes) {
         const prog = Math.min(92, 5 + Math.round((p.achados / Math.max(1, semFoto.length)) * 80));
         marcar(id, { etapa: p.etapa, progresso: prog });
       },
+      // Cada foto é gravada no catálogo assim que fica pronta, e não só no fim.
+      // A varredura leva de 30 a 60 minutos: se o servidor reiniciar no meio,
+      // tudo que já foi encontrado até ali continua valendo, e a próxima busca
+      // começa menor, porque só procura quem ainda está sem foto.
+      aoBaixar: async (r) => {
+        await Produto.updateOne(
+          { codigo: r.codigo, marcaSlug: MARCA },
+          { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } }
+        );
+        gravadas++;
+        marcar(id, { fotosGravadas: gravadas });
+      },
     });
 
     marcar(id, { etapa: 'gravando as fotos no catálogo', progresso: 95 });
@@ -677,6 +710,7 @@ async function rodarBuscaDeFotos(id, opcoes) {
 
     const relatorioFinal = {
       ...relatorio,
+      fotosGravadas: gravadas,
       aindaSemFoto: await Produto.countDocuments({ marcaSlug: MARCA, ativo: true, imagem: '', imagemManual: '' }),
     };
 
