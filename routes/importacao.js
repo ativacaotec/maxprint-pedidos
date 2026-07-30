@@ -936,20 +936,39 @@ router.get('/samsonite/status/:id', (req, res) => {
  * foi gravada em todos eles. No catálogo do cliente isso aparece como três
  * mochilas com a foto da mesma cor, com o nome da cor certo embaixo.
  *
- * Duas assinaturas denunciam a foto suspeita:
- *   1. o mesmo ARQUIVO em mais de um código — é o caso das páginas inteiras
- *      do catálogo em PDF, usadas como ilustração de vários itens;
- *   2. a mesma PÁGINA de origem em mais de um código — é o caso da loja: cada
- *      código ganhou um arquivo próprio, mas todos saíram da mesma foto.
+ * A assinatura é UMA só: a mesma imagem, byte a byte, em mais de um código.
+ * Cobre os dois casos — a página inteira do catálogo em PDF usada como
+ * ilustração de vários itens, e a foto de uma cor gravada em arquivos de nomes
+ * diferentes para várias cores.
  *
  * Foto anexada à mão pelo admin não é tocada: aquela foi conferida por gente.
  * A suspeita é apagada do produto, não do disco — a próxima busca regrava por
  * cima com o mesmo nome de arquivo.
  * ------------------------------------------------------------------ */
 
-function paginaDaOrigem(origem) {
-  const m = String(origem || '').match(/https?:\/\/\S+/);
-  return m ? m[0] : '';
+const crypto = require('crypto');
+
+// Impressão digital do arquivo de imagem. É por CONTEÚDO, e não pelo nome nem
+// pela página de origem.
+//
+// A primeira versão desta faxina agrupava por página de origem, porque o
+// buscador antigo carimbava a foto de uma página em todos os códigos que
+// apareciam nela. Com o buscador consertado isso deixou de valer: uma mesma
+// página da loja pode, legitimamente, dar foto DIFERENTE para dois códigos —
+// e agrupar por página apagaria foto certa. Conferido em produção: de três
+// pares suspeitos pela regra antiga, dois tinham fotos diferentes.
+//
+// Byte a byte não erra: se dois códigos têm o mesmo arquivo, é a mesma foto.
+const cacheHash = new Map();
+function digitalDaImagem(nome) {
+  if (!nome) return '';
+  if (cacheHash.has(nome)) return cacheHash.get(nome);
+  let h = '';
+  try {
+    h = crypto.createHash('sha1').update(fs.readFileSync(path.join(PASTA_IMAGENS, nome))).digest('hex');
+  } catch (_) { h = 'arquivo-sumiu:' + nome; }
+  cacheHash.set(nome, h);
+  return h;
 }
 
 router.post('/fotos/revisar', async (req, res) => {
@@ -968,21 +987,16 @@ router.post('/fotos/revisar', async (req, res) => {
       $or: [{ imagem: { $ne: '' } }, { imagemPagina: { $ne: '' } }],
     }).select('codigo codigoOriginal nome cor imagem imagemPagina imagemManual fotoOrigem').lean();
 
-    const porArquivo = new Map();
-    const porPagina = new Map();
+    const porConteudo = new Map();
     const comPaginaIlustrativa = [];
     for (const p of produtos) {
       if (p.imagemManual) continue;
       if (p.imagemPagina) comPaginaIlustrativa.push(p);
-      if (p.imagem) {
-        if (!porArquivo.has(p.imagem)) porArquivo.set(p.imagem, []);
-        porArquivo.get(p.imagem).push(p);
-      }
-      const pag = paginaDaOrigem(p.fotoOrigem);
-      if (pag) {
-        if (!porPagina.has(pag)) porPagina.set(pag, []);
-        porPagina.get(pag).push(p);
-      }
+      if (!p.imagem) continue;
+      const chave = digitalDaImagem(p.imagem);
+      if (!chave) continue;
+      if (!porConteudo.has(chave)) porConteudo.set(chave, []);
+      porConteudo.get(chave).push(p);
     }
 
     const suspeitos = new Map(); // codigo -> motivo
@@ -992,8 +1006,9 @@ router.post('/fotos/revisar', async (req, res) => {
       grupos.push({ motivo, chave, codigos: lista.map((p) => p.codigoOriginal || p.codigo) });
       lista.forEach((p) => suspeitos.set(p.codigo, motivo));
     };
-    for (const [arq, lista] of porArquivo) marcarGrupo(lista, 'mesmo arquivo de imagem', arq);
-    for (const [pag, lista] of porPagina) marcarGrupo(lista, 'mesma página de origem', pag);
+    for (const [chave, lista] of porConteudo) {
+      marcarGrupo(lista, 'a mesma foto, byte a byte', lista[0].imagem);
+    }
 
     let limpos = 0;
     let paginasLimpas = 0;
