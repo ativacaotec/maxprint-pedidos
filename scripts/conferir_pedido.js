@@ -192,6 +192,169 @@ function criarCliente() {
   conferir('e também não consegue mandar pedido dela',
     invadirPedido.status === 403, String(invadirPedido.status));
 
+  /* ---------------- 4b. Buracos do envio de pedido --------------------- */
+  // Cada checagem aqui guarda um jeito de furar a validação do servidor que
+  // existia de verdade. A tela nunca produz nenhum destes casos — todos entram
+  // por POST direto, que é justamente o que a trava do servidor existe para
+  // barrar ("o navegador pode ser contornado", diz o comentário da rota).
+  console.log('\nO que o servidor precisa recusar:');
+
+  const enviar = (corpo) => cliente('/api/pedidos', { method: 'POST', body: JSON.stringify(corpo) });
+  const base = { marca: 'maxprint', condicao: '30', cabecalho };
+
+  // 70000119 tem 120 em estoque. Duas linhas de 100 somam 200.
+  const repetido = await enviar({ ...base, itens: [
+    { codigo: '70000119', quantidade: 100 }, { codigo: '70000119', quantidade: 100 },
+  ] });
+  conferir('duas linhas do mesmo código somam antes de conferir o saldo',
+    repetido.status === 422, `${repetido.status} ${JSON.stringify(repetido.corpo.recusados || repetido.corpo.erro || '').slice(0, 90)}`);
+
+  const inexistente = await enviar({ ...base, itens: [
+    { codigo: '70000119', quantidade: 100 }, { codigo: 'NAO-EXISTE-99', quantidade: 5 },
+  ] });
+  conferir('item que sumiu do catálogo é recusado, não descartado calado',
+    inexistente.status === 422
+      && JSON.stringify(inexistente.corpo.recusados || []).includes('NAO-EXISTE-99'),
+    `${inexistente.status} ${JSON.stringify(inexistente.corpo).slice(0, 110)}`);
+
+  const quantidadeTorta = await enviar({ ...base, itens: [{ codigo: '70000119', quantidade: '12,5' }] });
+  conferir('quantidade que não é número não vira pedido com total NaN',
+    quantidadeTorta.status !== 200, `${quantidadeTorta.status} total=${quantidadeTorta.corpo.total}`);
+
+  const condicaoTorta = await enviar({ ...base, condicao: 'parcelado', itens: [{ codigo: '70000119', quantidade: 100 }] });
+  conferir('condição de pagamento inventada dá recado, não erro 500',
+    condicaoTorta.status === 400, `${condicaoTorta.status} ${condicaoTorta.corpo.erro || ''}`);
+
+  // Samsonite: mínimo R$ 3.500, CIF só a partir de R$ 5.000.
+  const freteForjado = await cliente('/api/pedidos', {
+    method: 'POST',
+    body: JSON.stringify({
+      marca: 'samsonite', condicao: '30',
+      cabecalho: { ...cabecalho, frete: 'CIF' },
+      itens: [{ codigo: '146203D1101', quantidade: 4 }],
+    }),
+  });
+  conferir('cliente não consegue escrever CIF num pedido abaixo do valor',
+    freteForjado.status === 200 && freteForjado.corpo.frete !== 'CIF',
+    `${freteForjado.status} frete=${freteForjado.corpo.frete} total=${freteForjado.corpo.total}`);
+
+  // Endereço com letra onde devia ter número derrubava o processo inteiro.
+  const enderecoTorto = await cliente('/api/pedidos/abc');
+  conferir('endereço inválido responde 400 em vez de derrubar o servidor',
+    enderecoTorto.status === 400, String(enderecoTorto.status));
+  const aindaDePe = await cliente('/api/pedidos?limite=200');
+  conferir('e o servidor continua de pé depois disso', aindaDePe.status === 200, String(aindaDePe.status));
+
+  // Operador do Mongo entrando por query string.
+  const operador = await cliente('/api/pedidos?status[$ne]=x');
+  conferir('operador do Mongo na query string não passa',
+    operador.status === 200 && Array.isArray(operador.corpo),
+    `${operador.status} ${typeof operador.corpo}`);
+
+  // O desconto do cliente é o que o sistema mais promete esconder dele.
+  const previa = await cliente('/api/pedidos/previa', {
+    method: 'POST',
+    body: JSON.stringify({ ...base, itens: [{ codigo: '70000119', quantidade: 100 }] }),
+  });
+  conferir('a prévia não devolve o desconto do cliente',
+    previa.status === 200 && previa.corpo.descontoCliente === undefined,
+    JSON.stringify(previa.corpo.descontoCliente));
+  conferir('nem o preço de tabela, de onde a margem sai por subtração',
+    previa.status === 200 && (previa.corpo.itens || []).every((i) => i.precoTabela === undefined),
+    JSON.stringify((previa.corpo.itens || [])[0] || {}).slice(0, 120));
+
+  /* ---------------- 4c. Yin's: tarja e unidade de venda ---------------- */
+  // Nenhum arranjo de teste fechava pedido da Yin's, que é a marca onde o
+  // número sozinho engana: item vendido em embalagem de 12, quem digita 24 e
+  // é atendido em peça recebe 24 no lugar de 288.
+  console.log("\nYin's · tarja e unidade de venda:");
+  const yin = criarCliente();
+  await yin('/api/auth/login', { method: 'POST', body: JSON.stringify({ usuario: 'yinsteste', senha: 'teste123' }) });
+
+  const zerado = await yin('/api/pedidos', {
+    method: 'POST',
+    body: JSON.stringify({ marca: 'yins', condicao: '30', cabecalho, itens: [{ codigo: 'Y-1003', quantidade: 5 }] }),
+  });
+  conferir('item ZERADO da Yin\'s não vira pedido', zerado.status === 422, String(zerado.status));
+
+  const abaixoDoMinimoItem = await yin('/api/pedidos', {
+    method: 'POST',
+    body: JSON.stringify({ marca: 'yins', condicao: '30', cabecalho, itens: [{ codigo: 'Y-1001', quantidade: 12 }] }),
+  });
+  conferir('o mínimo por item do catálogo é respeitado (pediu 12, mínimo 24)',
+    abaixoDoMinimoItem.status === 422, `${abaixoDoMinimoItem.status} ${JSON.stringify(abaixoDoMinimoItem.corpo.recusados || '').slice(0, 80)}`);
+
+  const pedidoYins = await yin('/api/pedidos', {
+    method: 'POST',
+    body: JSON.stringify({
+      marca: 'yins', condicao: '30', cabecalho,
+      itens: [{ codigo: 'Y-1001', quantidade: 2400 }, { codigo: 'Y-1002', quantidade: 100 }],
+    }),
+  });
+  conferir('pedido Yin\'s com item REGULAR e REDUZIDO é aceito',
+    pedidoYins.status === 200, `${pedidoYins.status} ${pedidoYins.corpo.erro || JSON.stringify(pedidoYins.corpo.recusados || '')}`);
+
+  if (pedidoYins.status === 200) {
+    const gravado = await yin('/api/pedidos/' + pedidoYins.corpo.numero);
+    const linhaRegular = (gravado.corpo.itens || []).find((i) => i.codigo === 'Y-1001');
+    const linhaReduzida = (gravado.corpo.itens || []).find((i) => i.codigo === 'Y-1002');
+    conferir('a unidade de venda vai gravada no item do pedido',
+      linhaRegular && linhaRegular.unidadeVenda === 'embalagem de 12 peças',
+      JSON.stringify(linhaRegular && linhaRegular.unidadeVenda));
+    conferir('a tarja do estoque também',
+      linhaReduzida && linhaReduzida.situacaoEstoque === 'REDUZIDO',
+      JSON.stringify(linhaReduzida && linhaReduzida.situacaoEstoque));
+
+    const somaItens = (gravado.corpo.itens || []).reduce((a, i) => a + Number(i.total || 0), 0);
+    conferir('a soma das linhas bate com o total do pedido',
+      Math.abs(somaItens - gravado.corpo.total) < 0.01,
+      `soma=${somaItens} total=${gravado.corpo.total}`);
+
+    const pdf = await yin('/api/pedidos/' + pedidoYins.corpo.numero + '/pdf');
+    conferir('o PDF do pedido Yin\'s sai sem erro', pdf.status === 200, String(pdf.status));
+    const excel = await yin('/api/pedidos/' + pedidoYins.corpo.numero + '/excel');
+    conferir('e o Excel também', excel.status === 200, String(excel.status));
+  }
+
+  /* ---------------- 4d. A sessão precisa envelhecer -------------------- */
+  // Antes, a sessão era um retrato do login e valia 12 horas: desligar alguém
+  // não fechava a aba que ele já tinha aberta, e tirar uma marca de um cliente
+  // não tirava o catálogo dela da tela.
+  console.log('\nA sessão acompanha o cadastro:');
+  const admin = criarCliente();
+  await admin('/api/auth/login', { method: 'POST', body: JSON.stringify({ usuario: 'marcelo', senha: 'teste123' }) });
+
+  const cobaia = criarCliente();
+  await cobaia('/api/auth/login', { method: 'POST', body: JSON.stringify({ usuario: 'descartavel', senha: 'teste123' }) });
+  const antesDeMexer = await cobaia('/api/catalogo?marca=maxprint');
+  conferir('o cliente entra e vê o catálogo dele', antesDeMexer.status === 200, String(antesDeMexer.status));
+
+  const listaUsuarios = await admin('/api/admin/usuarios?perfil=cliente');
+  const oDescartavel = (listaUsuarios.corpo || []).find((u) => u.usuario === 'descartavel');
+  conferir('o admin acha o cliente na lista', !!oDescartavel, JSON.stringify(listaUsuarios.corpo || '').slice(0, 80));
+
+  if (oDescartavel) {
+    await admin('/api/admin/usuarios/' + oDescartavel._id, {
+      method: 'PATCH', body: JSON.stringify({ catalogoStatus: 'travado' }),
+    });
+    const depois = await cobaia('/api/catalogo?marca=maxprint');
+    conferir('travar o catálogo vale na sessão que já estava aberta',
+      depois.status === 423, String(depois.status));
+    const pedidoBloqueado = await cobaia('/api/pedidos/previa', {
+      method: 'POST',
+      body: JSON.stringify({ marca: 'maxprint', condicao: '30', cabecalho, itens: [{ codigo: '70000119', quantidade: 100 }] }),
+    });
+    conferir('e a prévia de preço também fica fechada',
+      pedidoBloqueado.status === 423, String(pedidoBloqueado.status));
+
+    await admin('/api/admin/usuarios/' + oDescartavel._id, {
+      method: 'PATCH', body: JSON.stringify({ ativo: false }),
+    });
+    const desligado = await cobaia('/api/pedidos');
+    conferir('desativar o usuário encerra a sessão dele na hora',
+      desligado.status === 401, String(desligado.status));
+  }
+
   /* ---------------- 5. Excluir pedido ---------------------------------- */
   // O botão apaga de vez. O que estes testes guardam é o efeito colateral que
   // ninguém vê na hora: se o número do pedido apagado voltasse, dois pedidos

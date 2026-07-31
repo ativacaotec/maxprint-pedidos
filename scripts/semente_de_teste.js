@@ -46,6 +46,14 @@ async function semear() {
     nome: 'ZZ Cliente Descartavel', usuario: 'descartavel', senhaHash: bcrypt.hashSync('teste123', 10),
     perfil: 'cliente', catalogoStatus: 'live', desconto: 0, marcasPermitidas: ['maxprint'],
   });
+  // Cliente próprio da Yin's. É a marca que trabalha por TARJA e por UNIDADE
+  // DE VENDA, e nenhum arranjo de teste fechava pedido dela — justo a marca
+  // em que "24" pode significar 288 peças.
+  await Usuario.create({
+    nome: 'Cliente Yins', usuario: 'yinsteste', senhaHash: bcrypt.hashSync('teste123', 10),
+    perfil: 'cliente', catalogoStatus: 'live', desconto: 0, marcasPermitidas: ['yins'],
+    razaoSocial: 'Bazar Teste LTDA', cnpj: '98.765.432/0001-10',
+  });
 
   /* ---- produtos Maxprint ---- */
   const maxprint = [
@@ -110,6 +118,22 @@ async function semear() {
       cor, precoBase: preco, precoCheio: promo ? Math.round(preco / (1 - desc / 100)) : preco,
       emPromocao: promo, descontoPromo: desc, estoque, status: 'DISPONIVEL',
       grupoCores: [], ativo: true, imagem: '',
+    });
+  }
+
+  /* ---- produtos Yin's: tarja em vez de saldo, e unidade de venda ---- */
+  const yins = [
+    ['Y-1001', 'CANETA GEL AZUL', 'PAPELARIA', 2.4, 'REGULAR', 'embalagem de 12 peças', 24],
+    ['Y-1002', 'ESTOJO ESCOLAR ZIPER', 'PAPELARIA', 12.9, 'REDUZIDO', 'peça', 0],
+    ['Y-1003', 'MOCHILA COSTAS 18', 'MOCHILAS', 79.9, 'ZERADO', 'peça', 0],
+  ];
+  for (const [codigo, nome, categoria, preco, tarja, unidade, mininimo] of yins) {
+    await Produto.create({
+      marcaSlug: 'yins', codigo, codigoOriginal: codigo, nome, categoria,
+      linhaProduto: categoria, segmento: categoria, catalogoNome: 'CATALOGO TESTE',
+      precoBase: preco, estoque: 0, situacaoEstoque: tarja,
+      unidadeVenda: unidade, pedidoMinimo: mininimo,
+      status: 'ATIVO', ativo: true, imagem: '',
     });
   }
 

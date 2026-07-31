@@ -30,6 +30,9 @@ Module.prototype.require = function fingirConnectMongo(nome) {
 
 process.env.PORT = process.env.PORT || '3999';
 process.env.HOST = '127.0.0.1';
+// Sem isto o servidor sorteia um segredo e avisa em voz alta — comportamento
+// certo em produção, mas aqui só sujaria a saída do arranjo de teste.
+process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'segredo-do-arranjo-de-teste';
 
 const semear = require('./semente_de_teste');
 
