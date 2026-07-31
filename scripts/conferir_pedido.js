@@ -400,6 +400,55 @@ function criarCliente() {
     seguinte.status === 200 && seguinte.corpo.numero > numeroApagado,
     `apagado=${numeroApagado} proximo=${seguinte.corpo.numero}`);
 
+  /* ---------------- 6. Excluir usuário --------------------------------- */
+  // As travas aqui guardam o pior caso do painel: ficar sem nenhum acesso de
+  // administrador, com o conserto só pelo terminal do VPS.
+  console.log('\nExcluir usuário:');
+  const usuarios = await admin('/api/admin/usuarios');
+  const eu = (usuarios.corpo || []).find((u) => u.usuario === 'marcelo');
+  const umCliente = (usuarios.corpo || []).find((u) => u.usuario === 'yinsteste');
+
+  conferir('a lista de usuários informa quantos pedidos cada um fez',
+    (usuarios.corpo || []).every((u) => typeof u.pedidos === 'number'),
+    JSON.stringify((usuarios.corpo || [])[0] || {}).slice(0, 90));
+
+  const euMesmo = await admin('/api/admin/usuarios/' + eu._id, { method: 'DELETE' });
+  conferir('o admin não consegue excluir o próprio acesso',
+    euMesmo.status === 400, `${euMesmo.status} ${euMesmo.corpo.erro || ''}`);
+
+  const semPermissaoUsuario = await cliente('/api/admin/usuarios/' + umCliente._id, { method: 'DELETE' });
+  conferir('cliente não consegue excluir usuário nenhum',
+    semPermissaoUsuario.status === 403, String(semPermissaoUsuario.status));
+
+  const apagouCliente = await admin('/api/admin/usuarios/' + umCliente._id, { method: 'DELETE' });
+  conferir('o admin exclui um cliente', apagouCliente.status === 200,
+    `${apagouCliente.status} ${apagouCliente.corpo.erro || ''}`);
+  conferir('e a resposta diz quantos pedidos ficam no histórico',
+    typeof apagouCliente.corpo.pedidosQueFicam === 'number',
+    JSON.stringify(apagouCliente.corpo));
+
+  const listaDepois = await admin('/api/admin/usuarios');
+  conferir('o cliente some da lista',
+    !(listaDepois.corpo || []).some((u) => u.usuario === 'yinsteste'));
+
+  // O pedido que ele fez continua de pé, com os dados dele gravados dentro.
+  const pedidosAinda = await admin('/api/pedidos?limite=200');
+  const doApagado = (pedidosAinda.corpo || []).filter((p) => p.clienteUsuario === 'yinsteste');
+  conferir('mas os pedidos dele continuam no histórico',
+    doApagado.length > 0 && doApagado.every((p) => p.razaoSocial),
+    `${doApagado.length} pedidos`);
+
+  const naoEntraMais = criarCliente();
+  const tentouEntrar = await naoEntraMais('/api/auth/login', {
+    method: 'POST', body: JSON.stringify({ usuario: 'yinsteste', senha: 'teste123' }),
+  });
+  conferir('e ele não entra mais no sistema', tentouEntrar.status !== 200, String(tentouEntrar.status));
+
+  // Último admin: com o marcelo sendo o único, nem outro admin poderia apagá-lo.
+  const adminsAgora = (listaDepois.corpo || []).filter((u) => u.perfil === 'admin');
+  conferir('só existe um administrador, então a trava do último vale',
+    adminsAgora.length === 1, `${adminsAgora.length} admins`);
+
   /* ------------------------------ fim ---------------------------------- */
   const falharam = resultados.filter((r) => !r.passou);
   console.log('\n===================== resultado =====================');

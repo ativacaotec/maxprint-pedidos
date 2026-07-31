@@ -123,6 +123,36 @@ async function entrar(pagina, usuario, senha) {
       await foto(p, nome);
     }
 
+    // --- excluir acesso: botão na lista e confirmação que diz o que fica ---
+    await p.click('.abas button[data-aba="clientes"]');
+    await p.waitForTimeout(1000);
+    const botoesExcluirUsuario = await p.$$eval('[data-excluir-usuario]', (e) => e.length);
+    conferir('cada cliente tem o botão de excluir acesso',
+      botoesExcluirUsuario > 0, `${botoesExcluirUsuario} botões`);
+    const euNaEquipe = await p.$eval('#aba-clientes', (e) => /é você/.test(e.innerText));
+    conferir('o próprio admin aparece como "é você", sem botão de excluir', euNaEquipe);
+
+    if (botoesExcluirUsuario) {
+      await p.click('[data-excluir-usuario]');
+      await p.waitForTimeout(900);
+      const janelaUsuario = await p.evaluate(() => ({
+        aberta: document.getElementById('tapa').classList.contains('aberto'),
+        texto: (document.getElementById('janela') || {}).innerText || '',
+      }));
+      conferir('a confirmação diz de quem é o acesso',
+        janelaUsuario.aberta && /Excluir o acesso de/.test(janelaUsuario.texto),
+        JSON.stringify(janelaUsuario.texto.slice(0, 70)));
+      conferir('e explica o que acontece com os pedidos dele',
+        /pedido/i.test(janelaUsuario.texto), JSON.stringify(janelaUsuario.texto.slice(0, 200)));
+      await foto(p, '03b-excluir-acesso');
+
+      await p.click('#xu-cancelar');
+      await p.waitForTimeout(800);
+      const depoisDeCancelar = await p.$$eval('[data-excluir-usuario]', (e) => e.length);
+      conferir('cancelar não apaga ninguém',
+        depoisDeCancelar === botoesExcluirUsuario, `${depoisDeCancelar} de ${botoesExcluirUsuario}`);
+    }
+
     // O formulário do cliente é o que ganhou as marcas: abro para conferir.
     await p.click('.abas button[data-aba="clientes"]');
     await p.waitForTimeout(700);
