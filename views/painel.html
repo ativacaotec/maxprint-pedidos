@@ -300,6 +300,8 @@ function tabelaPedidos(lista, vazio) {
         <button class="acao" data-ver="${p.numero}">Ver</button>
         <a class="acao" href="/api/pedidos/${p.numero}/excel">Excel</a>
         <a class="acao" href="/api/pedidos/${p.numero}/pdf" target="_blank">PDF</a>
+        <button class="acao" data-excluir="${p.numero}"
+                style="color:var(--vermelho);border-color:#F3C6C2">Excluir</button>
       </td>
     </tr>`).join('')}</tbody></table>`;
 }
@@ -308,6 +310,68 @@ function ligarPedidos() {
   document.querySelectorAll('[data-ver]').forEach(b => {
     b.addEventListener('click', () => verPedido(b.dataset.ver));
   });
+  document.querySelectorAll('[data-excluir]').forEach(b => {
+    b.addEventListener('click', () => confirmarExclusao(b.dataset.excluir));
+  });
+}
+
+/**
+ * Excluir pedido é para valer: sai do banco e não volta.
+ *
+ * Por isso a confirmação mostra o pedido inteiro pelo qual você está
+ * respondendo — número, cliente, valor, quantos itens e quando chegou. Um
+ * "tem certeza?" seco não ajuda ninguém a perceber que clicou na linha errada;
+ * o nome do cliente e o valor, sim.
+ */
+async function confirmarExclusao(numero) {
+  let p;
+  try { p = await api('/api/pedidos/' + numero); }
+  catch (e) { alert(e.message); return; }
+
+  $('janela').innerHTML = `
+    <h1>Excluir o pedido ${p.numero}?</h1>
+    <p class="sub">Isso apaga o pedido de vez. Não tem como desfazer.</p>
+
+    <div class="cartoes">
+      <div class="cartao"><div class="r">Cliente</div>
+        <div class="v" style="font-size:15px">${esc(p.razaoSocial || '(sem razão social)')}</div></div>
+      <div class="cartao"><div class="r">Total</div>
+        <div class="v" style="font-size:20px">${dinheiro(p.total)}</div></div>
+      <div class="cartao"><div class="r">Itens</div>
+        <div class="v">${p.itens.length}</div></div>
+      <div class="cartao"><div class="r">Chegou em</div>
+        <div class="v" style="font-size:15px">${data(p.createdAt)}</div></div>
+      <div class="cartao"><div class="r">Status</div>
+        <div class="v" style="font-size:15px">${esc(p.status)}</div></div>
+    </div>
+
+    <div class="aviso erro" style="margin-top:4px">
+      O número <b>${p.numero}</b> não será reaproveitado: o próximo pedido continua
+      da sequência. O PDF deste pedido pode já estar no e-mail de alguém.
+    </div>
+
+    <div id="erro-excluir"></div>
+
+    <div class="solto" style="margin-top:14px">
+      <button class="primaria" id="x-confirmar"
+              style="background:var(--vermelho);border-color:var(--vermelho)">Excluir de vez</button>
+      <button class="acao" id="x-cancelar">Cancelar</button>
+    </div>`;
+  $('tapa').classList.add('aberto');
+
+  $('x-cancelar').onclick = fecharJanela;
+  $('x-confirmar').onclick = async () => {
+    const b = $('x-confirmar');
+    b.disabled = true; b.textContent = 'excluindo...';
+    try {
+      await api('/api/pedidos/' + numero, { method: 'DELETE' });
+      fecharJanela();
+      abaPedidos();
+    } catch (e) {
+      $('erro-excluir').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      b.disabled = false; b.textContent = 'Excluir de vez';
+    }
+  };
 }
 
 async function verPedido(numero) {
