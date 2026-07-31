@@ -31,6 +31,23 @@ const ItemSchema = new mongoose.Schema(
     total: { type: Number, default: 0 },
 
     estoqueNoMomento: { type: Number, default: 0 },
+
+    /**
+     * Como este item é vendido e como estava o estoque na hora do pedido.
+     *
+     * Os dois nascem da Yin's e vão para o PDF de propósito. `models/Produto`
+     * já avisa por que a unidade importa: "a unidade de venda muda de catálogo
+     * para catálogo (peça, embalagem, kit, par, jogo). Quem digita 24 achando
+     * que são peças, num item vendido em embalagem de 12, está pedindo 288".
+     * A tela mostra isso; o pedido não mostrava, e quem digita na fábrica lia
+     * só o número.
+     *
+     * A tarja é a outra metade: `lib/catalogoServico.js` promete que o item
+     * REDUZIDO "sai marcado na tela e no PDF do pedido — o cliente precisa
+     * saber que pode não vir tudo". No PDF isso não existia.
+     */
+    unidadeVenda: { type: String, default: '' },
+    situacaoEstoque: { type: String, default: '' },
   },
   { _id: false }
 );
