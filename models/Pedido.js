@@ -86,12 +86,26 @@ const PedidoSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-/** Numeração sequencial simples, feita na hora de salvar o primeiro registro. */
+/**
+ * Numeração sequencial, feita na hora de salvar o primeiro registro.
+ *
+ * O número sai do maior que existe no banco E do maior que JÁ EXISTIU, que
+ * fica guardado na configuração. A segunda parte é o que impede o número de um
+ * pedido excluído de voltar: apagando o pedido 1042, o banco passaria a achar
+ * que o maior é 1041 e o próximo cliente ganharia um 1042 novo — com o PDF do
+ * 1042 antigo já circulando por aí.
+ */
 PedidoSchema.pre('validate', async function numerar(next) {
   if (this.numero) return next();
   try {
-    const ultimo = await this.constructor.findOne().sort({ numero: -1 }).select('numero').lean();
-    this.numero = (ultimo && ultimo.numero ? ultimo.numero : 1000) + 1;
+    const Config = require('./Config');
+    const [ultimo, config] = await Promise.all([
+      this.constructor.findOne().sort({ numero: -1 }).select('numero').lean(),
+      Config.carregar(),
+    ]);
+    const noBanco = (ultimo && ultimo.numero) || 0;
+    const jaUsado = (config && config.ultimoNumeroPedido) || 0;
+    this.numero = Math.max(noBanco, jaUsado, 1000) + 1;
     next();
   } catch (e) {
     next(e);

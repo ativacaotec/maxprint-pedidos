@@ -28,6 +28,17 @@ const ConfigSchema = new mongoose.Schema(
       default: ['marcelocarvalho.ativacao@gmail.com', 'pedidos.ativacao@gmail.com'],
     },
 
+    /**
+     * O maior número de pedido que já existiu, mesmo que ele tenha sido
+     * excluído depois.
+     *
+     * Sem isto, apagar o último pedido faria o próximo nascer com o MESMO
+     * número: a numeração é "maior número no banco + 1". Dois pedidos
+     * diferentes com o número 1042 — um deles já enviado em PDF para o cliente
+     * e para a fábrica — é confusão garantida. Número usado não volta.
+     */
+    ultimoNumeroPedido: { type: Number, default: 0 },
+
     nomeEmpresa: { type: String, default: 'Ativação Group' },
     tituloSistema: { type: String, default: 'Pedidos Maxprint' },
   },
