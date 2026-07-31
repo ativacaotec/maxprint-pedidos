@@ -244,8 +244,14 @@ async function entrar(pagina, usuario, senha) {
     await c.fill(BAHIA, '9999');
     await c.waitForTimeout(1600);
     const avisoEstoque = await c.textContent('#avisos');
+    // O aviso precisa dizer QUAL item e POR QUE — a mensagem antiga era sempre
+    // "o máximo é N", inclusive na recusa por pedido mínimo, em que N é o
+    // mínimo: o cliente diminuía a quantidade quando precisava aumentar.
     conferir('pedir acima do saldo mostra aviso na tela',
-      /estoque/i.test(avisoEstoque || ''), JSON.stringify(avisoEstoque));
+      /(estoque|saldo)/i.test(avisoEstoque || '')
+      && /BAHIA/i.test(avisoEstoque || '')
+      && /9999/.test(avisoEstoque || ''),
+      JSON.stringify(avisoEstoque));
     const marcouCampo = await c.$eval(BAHIA, (e) => e.classList.contains('excedeu'));
     conferir('e marca o campo de quantidade em vermelho', marcouCampo);
     await foto(c, '14-acima-do-saldo');
