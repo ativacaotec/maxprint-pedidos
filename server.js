@@ -47,10 +47,30 @@ app.use(compression());
 app.use(express.json({ limit: '4mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+/**
+ * Segredo que assina o cookie de sessão.
+ *
+ * O default antigo era um texto fixo que está publicado no GitHub. Se o `.env`
+ * do VPS perdesse a variável, o sistema subia calado assinando sessão com um
+ * segredo que qualquer um lê. Faltando a variável, agora sorteia um segredo na
+ * partida: quem já estava logado precisa entrar de novo (e só depois de um
+ * restart), o que é barulho suficiente para o problema aparecer, sem deixar o
+ * sistema fora do ar.
+ */
+const SEGREDO = process.env.SESSION_SECRET || require('crypto').randomBytes(48).toString('hex');
+if (!process.env.SESSION_SECRET) {
+  console.warn('[aviso] SESSION_SECRET não está no .env — sorteei um agora. '
+    + 'A cada restart do servidor todo mundo é deslogado. Defina a variável no .env do VPS.');
+}
+
+// HTTPS na frente (é o caso do Nginx do VPS) pede cookie `Secure`. Antes isso
+// dependia de uma variável separada, que podia ficar para trás.
+const PUBLICA_HTTPS = /^https:/i.test(String(process.env.URL_PUBLICA || ''));
+
 app.use(
   session({
     name: 'maxprint.sid',
-    secret: process.env.SESSION_SECRET || 'troque-isso-no-env',
+    secret: SEGREDO,
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({ mongoUrl: MONGO, collectionName: 'sessoes' }),
@@ -58,7 +78,7 @@ app.use(
       maxAge: 1000 * 60 * 60 * 12,
       httpOnly: true,
       sameSite: 'lax',
-      secure: String(process.env.COOKIE_SEGURO || 'nao') === 'sim',
+      secure: PUBLICA_HTTPS || String(process.env.COOKIE_SEGURO || 'nao') === 'sim',
     },
   })
 );
@@ -92,6 +112,12 @@ app.get('/painel', requireLogin, (req, res) => {
 
 /* ------------------------------- API ------------------------------- */
 
+// Toda rota async ganha o `.catch(next)` que o Express 4 não dá sozinho.
+// Sem isso, `GET /api/pedidos/abc` de qualquer cliente logado derrubava o
+// processo inteiro — ver lib/rotaSegura.js.
+const { protegerRotas } = require('./lib/rotaSegura');
+[rotasAuth, rotasCatalogo, rotasPedidos, rotasAdmin, rotasImportacao, rotasMarcas].forEach(protegerRotas);
+
 app.use('/api/auth', rotasAuth);
 app.use('/api/catalogo', rotasCatalogo);
 app.use('/api/pedidos', rotasPedidos);
@@ -110,7 +136,27 @@ app.use((err, req, res, next) => {
   if (err && err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({ erro: 'Arquivo grande demais.' });
   }
+  // Endereço com letra onde devia ter número: é erro de quem pediu, não do
+  // servidor. Responder 500 aqui escondia a causa e enchia o log de susto.
+  if (err && (err.name === 'CastError' || err.name === 'ValidationError')) {
+    return res.status(400).json({ erro: 'Endereço ou dado inválido no pedido.' });
+  }
   res.status(500).json({ erro: 'Deu problema aqui no servidor. Tente de novo.' });
+});
+
+/**
+ * Última rede: promise rejeitada que escapou de tudo.
+ *
+ * O padrão do Node 20 é derrubar o processo. Para um sistema em que o cliente
+ * está montando pedido e uma importação de 40 minutos pode estar rodando em
+ * segundo plano, cair é sempre pior do que seguir mancando — o pm2 até
+ * reinicia, mas a importação em memória se perde.
+ */
+process.on('unhandledRejection', (motivo) => {
+  console.error('[promessa sem dono]', motivo);
+});
+process.on('uncaughtException', (e) => {
+  console.error('[erro solto]', e);
 });
 
 /* ----------------------------- partida ----------------------------- */
