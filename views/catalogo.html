@@ -1587,9 +1587,21 @@ function desenharCarrinho() {
   else limparAvisos();
 }
 
+/**
+ * O aviso do que o servidor recusou.
+ *
+ * A mensagem antiga dizia sempre "o máximo é N" — inclusive quando a recusa era
+ * por PEDIDO MÍNIMO, em que N é o mínimo. O cliente lia "o máximo é 12" e
+ * diminuía a quantidade, quando o que ele precisava era aumentar. Agora quem
+ * explica é o motivo que o próprio servidor mandou.
+ */
 function avisarRecusados(recusados) {
-  mostrarAviso('erro', 'Passou do que existe em estoque: ' +
-    recusados.map(r => `${r.nome} (você pediu ${r.pedido}, o máximo é ${r.limite})`).join(' · '));
+  const linhas = recusados.map((r) => {
+    const nome = r.nome || r.codigo;
+    if (r.motivo) return `${nome}: ${r.motivo} (você pediu ${r.pedido})`;
+    return `${nome} (você pediu ${r.pedido}, o máximo é ${r.limite})`;
+  });
+  mostrarAviso('erro', 'O pedido não foi enviado — ' + linhas.join(' · '));
 }
 
 /** Resumo sempre visível no rodapé. */
