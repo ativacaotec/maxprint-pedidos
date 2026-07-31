@@ -33,7 +33,15 @@ router.get('/usuarios', async (req, res) => {
   const filtro = {};
   if (req.query.perfil) filtro.perfil = String(req.query.perfil);
   const lista = await Usuario.find(filtro).select(CAMPOS_PUBLICOS).sort({ nome: 1 }).lean();
-  res.json(lista);
+
+  // Quantos pedidos cada um já fez. Serve para a confirmação de exclusão poder
+  // dizer, antes de apagar, o que continua no histórico depois.
+  const contagem = await Pedido.aggregate([
+    { $group: { _id: '$clienteId', quantos: { $sum: 1 } } },
+  ]);
+  const porCliente = new Map(contagem.map((c) => [String(c._id), c.quantos]));
+
+  res.json(lista.map((u) => ({ ...u, pedidos: porCliente.get(String(u._id)) || 0 })));
 });
 
 /** Senha sugerida: legível de ditar por telefone e ainda assim aleatória. */
@@ -112,6 +120,59 @@ router.patch('/usuarios/:id', requireAdmin, async (req, res) => {
   // mudança só valeria depois do respiro do cache.
   esquecerUsuario(req.params.id);
   res.json(u);
+});
+
+/* ------------------------------------------------------------------ *
+ * Excluir usuário
+ *
+ * Apaga de vez, como no botão de excluir pedido. Três travas, e cada uma
+ * guarda um jeito de ficar sem acesso ao próprio sistema:
+ *
+ *   1. ninguém se apaga. Um clique errado na própria linha e o admin perde o
+ *      painel com a sessão ainda aberta na tela;
+ *   2. o ÚLTIMO admin não sai. Sem admin, não existe quem cadastre outro — o
+ *      conserto seria pelo terminal do VPS, rodando o create_admin;
+ *   3. o histórico do cliente continua de pé. O pedido guarda razão social,
+ *      CNPJ e usuário no próprio documento, então apagar a ficha não apaga o
+ *      que ele já comprou — mas o aviso na tela diz quantos pedidos são, para
+ *      ninguém apagar achando que some tudo.
+ *
+ * O usuário apagado sai no log do servidor (sem a senha), que é a única chance
+ * de recuperar alguma coisa se for o errado.
+ * ------------------------------------------------------------------ */
+router.delete('/usuarios/:id', requireAdmin, async (req, res) => {
+  const id = String(req.params.id);
+
+  if (id === String(req.session.usuario.id)) {
+    return res.status(400).json({ erro: 'Você não pode excluir o seu próprio acesso.' });
+  }
+
+  const u = await Usuario.findById(id).lean();
+  if (!u) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+
+  if (u.perfil === 'admin') {
+    const admins = await Usuario.countDocuments({ perfil: 'admin', ativo: { $ne: false } });
+    if (admins <= 1) {
+      return res.status(400).json({
+        erro: 'Este é o último administrador. Cadastre outro antes de excluir este.',
+      });
+    }
+  }
+
+  const pedidos = await Pedido.countDocuments({ clienteId: u._id });
+
+  const { senhaHash, ...semSenha } = u;
+  console.log('[usuario excluido]', JSON.stringify({
+    quem: req.session.usuario.usuario,
+    quando: new Date().toISOString(),
+    pedidosQueFicam: pedidos,
+    usuario: semSenha,
+  }));
+
+  await Usuario.deleteOne({ _id: u._id });
+  esquecerUsuario(id);
+
+  res.json({ ok: true, nome: u.nome, usuario: u.usuario, pedidosQueFicam: pedidos });
 });
 
 router.post('/usuarios/:id/senha', requireAdmin, async (req, res) => {
