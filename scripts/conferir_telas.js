@@ -83,6 +83,35 @@ async function entrar(pagina, usuario, senha) {
     await p.waitForTimeout(900);
     await foto(p, '01-painel-pedidos');
 
+    // --- excluir pedido: o botão existe e a confirmação diz de qual pedido ---
+    // Apagar é para valer, então a janela precisa mostrar cliente e valor.
+    // Um "tem certeza?" seco não avisa ninguém que clicou na linha errada.
+    const temExcluir = await p.$$eval('[data-excluir]', (e) => e.length);
+    conferir('cada pedido da lista tem o botão de excluir', temExcluir > 0, `${temExcluir} botões`);
+    if (temExcluir) {
+      await p.click('[data-excluir]');
+      await p.waitForTimeout(900);
+      const janela = await p.evaluate(() => ({
+        aberta: document.getElementById('tapa').classList.contains('aberto'),
+        texto: (document.getElementById('janela') || {}).innerText || '',
+      }));
+      conferir('a confirmação abre dizendo qual pedido é',
+        janela.aberta && /Excluir o pedido \d+/.test(janela.texto), JSON.stringify(janela.texto.slice(0, 80)));
+      // `innerText` devolve o texto como ele é DESENHADO, e o rótulo do cartão
+      // vem em caixa alta pelo CSS — por isso a comparação ignora maiúscula.
+      conferir('e mostra o cliente e o valor pelos quais você responde',
+        /cliente/i.test(janela.texto) && /R\$\s?[\d.]+,\d{2}/.test(janela.texto),
+        JSON.stringify(janela.texto.slice(0, 120)));
+      conferir('e avisa que o número não volta',
+        /não será reaproveitado/.test(janela.texto));
+      await foto(p, '01b-excluir-pedido');
+
+      await p.click('#x-cancelar');
+      await p.waitForTimeout(700);
+      const depois = await p.$$eval('[data-excluir]', (e) => e.length);
+      conferir('cancelar não apaga nada', depois === temExcluir, `${depois} de ${temExcluir}`);
+    }
+
     for (const [aba, nome] of [
       ['importar', '02-painel-importar'],
       ['clientes', '03-painel-clientes'],

@@ -192,6 +192,51 @@ function criarCliente() {
   conferir('e também não consegue mandar pedido dela',
     invadirPedido.status === 403, String(invadirPedido.status));
 
+  /* ---------------- 5. Excluir pedido ---------------------------------- */
+  // O botão apaga de vez. O que estes testes guardam é o efeito colateral que
+  // ninguém vê na hora: se o número do pedido apagado voltasse, dois pedidos
+  // diferentes teriam o mesmo número — e o PDF do primeiro já saiu por e-mail.
+  console.log('\nExcluir pedido:');
+  const equipe = criarCliente();
+  await equipe('/api/auth/login', { method: 'POST', body: JSON.stringify({ usuario: 'marcelo', senha: 'teste123' }) });
+
+  const paraApagar = await cliente('/api/pedidos', {
+    method: 'POST',
+    body: JSON.stringify({
+      marca: 'maxprint', condicao: '30', cabecalho,
+      itens: [{ codigo: '70000119', quantidade: 100 }],
+    }),
+  });
+  conferir('o pedido de teste foi criado', paraApagar.status === 200,
+    `${paraApagar.status} ${paraApagar.corpo.erro || ''}`);
+  const numeroApagado = paraApagar.corpo.numero;
+
+  const semPermissao = await cliente('/api/pedidos/' + numeroApagado, { method: 'DELETE' });
+  conferir('o cliente NÃO consegue excluir pedido',
+    semPermissao.status === 403, String(semPermissao.status));
+
+  const apagou = await equipe('/api/pedidos/' + numeroApagado, { method: 'DELETE' });
+  conferir('a equipe exclui o pedido', apagou.status === 200,
+    `${apagou.status} ${apagou.corpo.erro || ''}`);
+
+  const sumiu = await equipe('/api/pedidos/' + numeroApagado);
+  conferir('e ele some mesmo do banco', sumiu.status === 404, String(sumiu.status));
+
+  const deNovo = await equipe('/api/pedidos/' + numeroApagado, { method: 'DELETE' });
+  conferir('excluir o mesmo pedido duas vezes dá "não encontrado"',
+    deNovo.status === 404, String(deNovo.status));
+
+  const seguinte = await cliente('/api/pedidos', {
+    method: 'POST',
+    body: JSON.stringify({
+      marca: 'maxprint', condicao: '30', cabecalho,
+      itens: [{ codigo: '70000119', quantidade: 100 }],
+    }),
+  });
+  conferir('o número do pedido excluído NÃO volta para o próximo',
+    seguinte.status === 200 && seguinte.corpo.numero > numeroApagado,
+    `apagado=${numeroApagado} proximo=${seguinte.corpo.numero}`);
+
   /* ------------------------------ fim ---------------------------------- */
   const falharam = resultados.filter((r) => !r.passou);
   console.log('\n===================== resultado =====================');
