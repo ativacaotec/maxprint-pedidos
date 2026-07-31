@@ -367,4 +367,50 @@ router.patch('/:numero', requireInterno, async (req, res) => {
   res.json(p);
 });
 
+/* ------------------------------------------------------------------ *
+ * Painel: excluir pedido
+ *
+ * Apaga de vez, como combinado — não fica cópia no banco. Duas coisas
+ * acontecem junto com o apagar, e as duas são de propósito:
+ *
+ *  1. o número vai para a configuração antes de o pedido sumir, para que ele
+ *     NUNCA seja dado a outro pedido. O PDF do pedido apagado pode já estar no
+ *     e-mail de alguém;
+ *  2. o pedido inteiro sai no log do servidor antes de morrer. É a única
+ *     chance de reconstruir alguma coisa se o pedido errado for apagado —
+ *     `pm2 logs maxprint-pedidos` guarda isso por dias. Custa nada e um dia
+ *     salva uma tarde.
+ *
+ * Cliente não chega aqui: requireInterno barra. Admin e vendedor podem, como
+ * o Marcelo pediu.
+ * ------------------------------------------------------------------ */
+router.delete('/:numero', requireInterno, async (req, res) => {
+  const numero = Number(req.params.numero);
+  if (!Number.isFinite(numero)) return res.status(400).json({ erro: 'Número de pedido inválido.' });
+
+  const p = await Pedido.findOne({ numero }).lean();
+  if (!p) return res.status(404).json({ erro: 'Pedido não encontrado.' });
+
+  const config = await Config.carregar();
+  if ((config.ultimoNumeroPedido || 0) < numero) {
+    config.ultimoNumeroPedido = numero;
+    await config.save();
+  }
+
+  console.log('[pedido excluido]', JSON.stringify({
+    quem: req.session.usuario.usuario,
+    quando: new Date().toISOString(),
+    pedido: p,
+  }));
+
+  await Pedido.deleteOne({ _id: p._id });
+
+  res.json({
+    ok: true,
+    numero,
+    razaoSocial: p.razaoSocial,
+    total: p.total,
+  });
+});
+
 module.exports = router;
