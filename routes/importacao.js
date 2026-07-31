@@ -635,6 +635,8 @@ router.post(
  * ------------------------------------------------------------------ */
 
 const { buscarFotosMaxprint } = require('../lib/buscarFotosMaxprint');
+const { nomeSuspeito } = require('../lib/nomeDeProduto');
+const { normalizarCodigo } = require('../lib/codigo');
 
 async function rodarBuscaDeFotosMaxprint(id, opcoes) {
   const MARCA = 'maxprint';
@@ -660,8 +662,13 @@ async function rodarBuscaDeFotosMaxprint(id, opcoes) {
       if (!p.imagem || p.imagemManual) continue;
       usoDaImagem.set(p.imagem, (usoDaImagem.get(p.imagem) || 0) + 1);
     }
-    const alvo = todos.filter((p) => !p.imagemManual
-      && (!p.imagem || (usoDaImagem.get(p.imagem) || 0) > 1 || opcoes.todos));
+    // Entra também quem está com o NOME quebrado, mesmo já tendo foto: a
+    // mesma varredura que traz a imagem traz o título que a fábrica publica, e
+    // é ele que conserta os itens que foram para o ar com o cabeçalho da
+    // tabela do PDF no lugar do nome.
+    const alvo = todos.filter((p) => (!p.imagemManual
+      && (!p.imagem || (usoDaImagem.get(p.imagem) || 0) > 1 || opcoes.todos))
+      || nomeSuspeito(p.nome));
 
     if (!alvo.length) {
       marcar(id, {
@@ -672,7 +679,7 @@ async function rodarBuscaDeFotosMaxprint(id, opcoes) {
       return;
     }
 
-    const { resultados, relatorio, avisos } = await buscarFotosMaxprint(alvo, {
+    const { resultados, relatorio, avisos, nomesDoSite } = await buscarFotosMaxprint(alvo, {
       pastaImagens: PASTA_IMAGENS,
       prefixo: 'maxweb',
       pausaMs: opcoes.pausaMs,
@@ -691,7 +698,7 @@ async function rodarBuscaDeFotosMaxprint(id, opcoes) {
       aoBaixar: async (r) => {
         await Produto.updateOne(
           { codigo: r.codigo, marcaSlug: MARCA },
-          { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } }
+          { $set: { imagem: r.arquivo, imagemIlustrativa: !!r.ilustrativa, fotoOrigem: r.origem } }
         );
         gravadas++;
         marcar(id, { fotosGravadas: gravadas });
@@ -702,14 +709,38 @@ async function rodarBuscaDeFotosMaxprint(id, opcoes) {
     const operacoes = resultados.map((r) => ({
       updateOne: {
         filter: { codigo: r.codigo, marcaSlug: MARCA },
-        update: { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } },
+        update: { $set: { imagem: r.arquivo, imagemIlustrativa: !!r.ilustrativa, fotoOrigem: r.origem } },
       },
     }));
     if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
 
+    /* ---- nomes: só troca o que está claramente quebrado ---- */
+    // O leitor do PDF trouxe o cabeçalho da tabela como nome em 37 etiquetas.
+    // O site publica o nome do item exato ("Etiqueta INK Maxprint A4363
+    // 38.1mm x 99mm 100 Folhas Branca"). Nome bom não se mexe: o do site às
+    // vezes é da família, e o do catálogo é do item.
+    const trocasDeNome = [];
+    for (const p of alvo) {
+      if (!nomeSuspeito(p.nome)) continue;
+      const doSite = nomesDoSite && (nomesDoSite.get(normalizarCodigo(p.codigo))
+        || (p.codigoOriginal ? nomesDoSite.get(normalizarCodigo(p.codigoOriginal)) : null));
+      if (!doSite || nomeSuspeito(doSite)) continue;
+      trocasDeNome.push({
+        updateOne: {
+          filter: { codigo: p.codigo, marcaSlug: MARCA },
+          update: { $set: { nome: doSite.toUpperCase() } },
+        },
+      });
+      avisos.push(`Nome de ${p.codigo} trocado pelo do site: "${doSite}".`);
+    }
+    if (trocasDeNome.length) await Produto.bulkWrite(trocasDeNome, { ordered: false });
+
     const relatorioFinal = {
       ...relatorio,
       fotosGravadas: gravadas,
+      nomesCorrigidos: trocasDeNome.length,
+      nomesAindaQuebrados: (await Produto.find({ marcaSlug: MARCA, ativo: true }).select('nome').lean())
+        .filter((p) => nomeSuspeito(p.nome)).length,
       aindaSemFoto: await Produto.countDocuments({ marcaSlug: MARCA, ativo: true, imagem: '', imagemManual: '' }),
     };
 
@@ -805,7 +836,7 @@ async function rodarBuscaDeFotosLogitech(id, opcoes) {
       aoBaixar: async (r) => {
         await Produto.updateOne(
           { codigo: r.codigo, marcaSlug: MARCA },
-          { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } }
+          { $set: { imagem: r.arquivo, imagemIlustrativa: !!r.ilustrativa, fotoOrigem: r.origem } }
         );
         gravadas++;
         marcar(id, { fotosGravadas: gravadas });
@@ -816,7 +847,7 @@ async function rodarBuscaDeFotosLogitech(id, opcoes) {
     const operacoes = resultados.map((r) => ({
       updateOne: {
         filter: { codigo: r.codigo, marcaSlug: MARCA },
-        update: { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } },
+        update: { $set: { imagem: r.arquivo, imagemIlustrativa: !!r.ilustrativa, fotoOrigem: r.origem } },
       },
     }));
     if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
@@ -1354,7 +1385,7 @@ async function rodarBuscaDeFotos(id, opcoes) {
       aoBaixar: async (r) => {
         await Produto.updateOne(
           { codigo: r.codigo, marcaSlug: MARCA },
-          { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } }
+          { $set: { imagem: r.arquivo, imagemIlustrativa: !!r.ilustrativa, fotoOrigem: r.origem } }
         );
         gravadas++;
         marcar(id, { fotosGravadas: gravadas });
@@ -1366,7 +1397,7 @@ async function rodarBuscaDeFotos(id, opcoes) {
     const operacoes = resultados.map((r) => ({
       updateOne: {
         filter: { codigo: r.codigo, marcaSlug: MARCA },
-        update: { $set: { imagem: r.arquivo, imagemIlustrativa: false, fotoOrigem: r.origem } },
+        update: { $set: { imagem: r.arquivo, imagemIlustrativa: !!r.ilustrativa, fotoOrigem: r.origem } },
       },
     }));
     if (operacoes.length) await Produto.bulkWrite(operacoes, { ordered: false });
