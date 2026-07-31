@@ -1421,6 +1421,8 @@ async function abaClientes() {
           <button class="acao" data-senha="${c._id}">Nova senha</button>
           <button class="acao" data-liberar="${c._id}" data-atual="${c.catalogoStatus}">
             ${c.catalogoStatus==='live'?'Travar':'Liberar'}</button>
+          <button class="acao" data-excluir-usuario="${c._id}"
+                  style="color:var(--vermelho);border-color:#F3C6C2">Excluir</button>
         </td>
       </tr>`).join('')}</tbody></table>`}
     </div>
@@ -1428,10 +1430,15 @@ async function abaClientes() {
     <div class="painel">
       <h2>Equipe</h2>
       <p class="d">Quem enxerga o painel. Admin mexe em tudo, interno só acompanha.</p>
-      <table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Último acesso</th></tr></thead>
+      <table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Último acesso</th><th></th></tr></thead>
       <tbody>${equipe.map(u => `<tr>
         <td>${esc(u.nome)}</td><td><span class="senha">${esc(u.usuario)}</span></td>
         <td>${esc(u.perfil)}</td><td style="font-size:12px">${u.ultimoAcesso?data(u.ultimoAcesso):'nunca'}</td>
+        <td style="white-space:nowrap">
+          ${u._id === (EU && EU.id) ? '<span style="font-size:11.5px;color:var(--cinza)">é você</span>'
+            : `<button class="acao" data-excluir-usuario="${u._id}"
+                       style="color:var(--vermelho);border-color:#F3C6C2">Excluir</button>`}
+        </td>
       </tr>`).join('')}</tbody></table>
     </div>`;
 
@@ -1447,6 +1454,69 @@ async function abaClientes() {
         body: JSON.stringify({ catalogoStatus: b.dataset.atual === 'live' ? 'travado' : 'live' }) });
       abaClientes();
     });
+  document.querySelectorAll('[data-excluir-usuario]').forEach(b =>
+    b.onclick = () => confirmarExclusaoUsuario(
+      lista.find(u => u._id === b.dataset.excluirUsuario), nomeMarca));
+}
+
+/**
+ * Excluir um acesso é para valer: sai do banco e não volta.
+ *
+ * A confirmação mostra de quem é o acesso e — o que mais importa — quantos
+ * pedidos aquele cliente já fez. Os pedidos NÃO somem junto (cada pedido guarda
+ * razão social, CNPJ e usuário no próprio documento), mas ninguém adivinha isso
+ * olhando um "tem certeza?" seco, e o medo de perder o histórico é justamente o
+ * que faz alguém deixar cadastro velho acumulando na tela.
+ */
+async function confirmarExclusaoUsuario(u, nomeMarca) {
+  if (!u) return;
+  const ehCliente = u.perfil === 'cliente';
+
+  $('janela').innerHTML = `
+    <h1>Excluir o acesso de ${esc(u.nome)}?</h1>
+    <p class="sub">Isso apaga o cadastro de vez. Não tem como desfazer.</p>
+
+    <div class="cartoes">
+      <div class="cartao"><div class="r">Login</div>
+        <div class="v" style="font-size:16px">${esc(u.usuario)}</div></div>
+      <div class="cartao"><div class="r">Perfil</div>
+        <div class="v" style="font-size:16px">${esc(u.perfil)}</div></div>
+      ${ehCliente ? `<div class="cartao"><div class="r">Marcas</div>
+        <div class="v" style="font-size:14px">${(u.marcasPermitidas||['maxprint']).map(s=>esc(nomeMarca(s))).join(', ')}</div></div>` : ''}
+      <div class="cartao"><div class="r">Pedidos feitos</div>
+        <div class="v">${u.pedidos || 0}</div></div>
+      <div class="cartao"><div class="r">Último acesso</div>
+        <div class="v" style="font-size:14px">${u.ultimoAcesso ? data(u.ultimoAcesso) : 'nunca'}</div></div>
+    </div>
+
+    ${u.pedidos ? `<div class="aviso" style="margin-top:4px">
+      Os <b>${u.pedidos} pedidos</b> dele <b>continuam</b> na aba Pedidos, com razão social,
+      CNPJ e valores. O que some é o login — ele perde o acesso ao catálogo na hora.
+    </div>` : `<div class="aviso" style="margin-top:4px">
+      Este cadastro nunca fechou pedido. Nada mais é afetado.</div>`}
+
+    <div id="erro-excluir-usuario"></div>
+
+    <div class="solto" style="margin-top:14px">
+      <button class="primaria" id="xu-confirmar"
+              style="background:var(--vermelho);border-color:var(--vermelho)">Excluir de vez</button>
+      <button class="acao" id="xu-cancelar">Cancelar</button>
+    </div>`;
+  $('tapa').classList.add('aberto');
+
+  $('xu-cancelar').onclick = fecharJanela;
+  $('xu-confirmar').onclick = async () => {
+    const b = $('xu-confirmar');
+    b.disabled = true; b.textContent = 'excluindo...';
+    try {
+      await api('/api/admin/usuarios/' + u._id, { method: 'DELETE' });
+      fecharJanela();
+      abaClientes();
+    } catch (e) {
+      $('erro-excluir-usuario').innerHTML = `<div class="aviso erro">${esc(e.message)}</div>`;
+      b.disabled = false; b.textContent = 'Excluir de vez';
+    }
+  };
 }
 
 /**
