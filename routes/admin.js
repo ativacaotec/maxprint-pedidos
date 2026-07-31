@@ -11,7 +11,7 @@ const Config = require('../models/Config');
 const Marca = require('../models/Marca');
 const { enviarAvisoPedido, configurado } = require('../lib/email');
 const { carregarMarca, listarMarcasAtivas } = require('../lib/marcas');
-const { requireLogin, requireInterno, requireAdmin } = require('../middleware/auth');
+const { requireLogin, requireInterno, requireAdmin, esquecerUsuario } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireLogin, requireInterno);
@@ -31,7 +31,7 @@ function marcasValidas(lista) {
 
 router.get('/usuarios', async (req, res) => {
   const filtro = {};
-  if (req.query.perfil) filtro.perfil = req.query.perfil;
+  if (req.query.perfil) filtro.perfil = String(req.query.perfil);
   const lista = await Usuario.find(filtro).select(CAMPOS_PUBLICOS).sort({ nome: 1 }).lean();
   res.json(lista);
 });
@@ -104,9 +104,13 @@ router.patch('/usuarios/:id', requireAdmin, async (req, res) => {
     set.marcasPermitidas = validas && validas.length ? validas : ['maxprint'];
   }
 
+  // Id fora do formato vira CastError, e o tratador do server.js responde 400.
   const u = await Usuario.findByIdAndUpdate(req.params.id, set, { new: true })
     .select(CAMPOS_PUBLICOS).lean();
   if (!u) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+  // A sessão dele guarda perfil, marcas e status: sem esquecer aqui, a
+  // mudança só valeria depois do respiro do cache.
+  esquecerUsuario(req.params.id);
   res.json(u);
 });
 

@@ -5,7 +5,7 @@ const Pedido = require('../models/Pedido');
 const Produto = require('../models/Produto');
 const Usuario = require('../models/Usuario');
 const Config = require('../models/Config');
-const { requireLogin, requireInterno } = require('../middleware/auth');
+const { requireLogin, requireInterno, requireCliente } = require('../middleware/auth');
 const { precoUnitario, fatorPrazo, interpretarCondicao, condicoesDisponiveis, regrasDaMarca } = require('../lib/prazo');
 const { carregarMarca, podeAcessarMarca } = require('../lib/marcas');
 const { gerarExcel } = require('../lib/gerarExcel');
@@ -14,16 +14,37 @@ const { enviarAvisoPedido } = require('../lib/email');
 
 const router = express.Router();
 router.use(requireLogin);
+// A trava de catálogo travado valia só em /api/catalogo. Um cliente recém
+// cadastrado — que nasce travado, "enquanto a base e o desconto estão sendo
+// preparados" — recebia 423 no catálogo mas conseguia varrer a tabela de preço
+// item a item pela prévia, e até mandar pedido de verdade, precificado com
+// desconto zero porque o desconto ainda nem tinha sido configurado.
+router.use(requireCliente);
 
 /* ------------------------------------------------------------------ *
  * Montagem do pedido (usada tanto na prévia quanto no envio)
  * ------------------------------------------------------------------ */
 
+/**
+ * Desconto que vale para este pedido.
+ *
+ * Do cliente, vem da ficha dele e ponto. Da equipe, pode vir digitado — mas
+ * preso na mesma faixa que o cadastro aceita (0 a 95%, `models/Usuario.js`).
+ * Sem esse limite, `descontoManual: 1.5` gerava preço negativo, e o total
+ * negativo passava pelo teste de pedido mínimo pelo lado errado.
+ */
+function descontoDoPedido(sessao, cliente, corpo) {
+  if (sessao.perfil === 'cliente') return cliente?.desconto || 0;
+  const pedido = Number(corpo.descontoManual || 0);
+  if (!Number.isFinite(pedido)) return 0;
+  return Math.min(0.95, Math.max(0, pedido));
+}
+
 async function montarPedido(sessao, corpo) {
   const config = await Config.carregar();
   const cliente = await Usuario.findById(sessao.id).lean();
   const ehCliente = sessao.perfil === 'cliente';
-  const desconto = ehCliente ? (cliente?.desconto || 0) : Number(corpo.descontoManual || 0);
+  const desconto = descontoDoPedido(sessao, cliente, corpo);
 
   const marcaSlug = String(corpo.marca || 'maxprint').toLowerCase();
   if (!podeAcessarMarca(sessao, marcaSlug)) {
@@ -40,6 +61,14 @@ async function montarPedido(sessao, corpo) {
   const regras = regrasDaMarca(marca);
 
   const cond = interpretarCondicao(corpo.condicao || '30', regras.condicoes);
+  // "400", "parcelado", "/" — qualquer coisa que não vire parcela devolve
+  // null. Sem esta guarda a linha que confere a condição liberada estourava em
+  // `cond.id` e o cliente recebia 500 com a mensagem técnica do JavaScript.
+  if (!cond) {
+    const erro = new Error('Condição de pagamento não reconhecida. Escolha uma das condições do catálogo.');
+    erro.status = 400;
+    throw erro;
+  }
   const info = fatorPrazo(cond, regras);
   if (info.negociar) {
     const erro = new Error(
@@ -58,9 +87,33 @@ async function montarPedido(sessao, corpo) {
     throw erro;
   }
 
-  const codigos = linhas.map((l) => String(l.codigo));
-  const produtos = await Produto.find({ codigo: { $in: codigos }, marcaSlug }).lean();
+  // O MESMO recorte que o catálogo usa. Sem isto, item desativado pela
+  // importação da madrugada, item sem preço e item de outlet escondido do
+  // cliente continuavam entrando por POST direto: some do catálogo, mas o
+  // pedido aceitava. Um item Yin's sem preço lido no PDF (precoBase 0) virava
+  // 300 peças a R$ 0,00 no pedido da fábrica.
+  const codigos = [...new Set(linhas.map((l) => String(l.codigo)))];
+  const filtroProduto = { codigo: { $in: codigos }, marcaSlug, ativo: true, precoBase: { $gt: 0 } };
+  if (ehCliente && cliente?.verOutlet === false) filtroProduto.outlet = { $ne: true };
+  if (Array.isArray(config.statusBloqueados) && config.statusBloqueados.length) {
+    filtroProduto.status = { $nin: config.statusBloqueados };
+  }
+  const produtos = await Produto.find(filtroProduto).lean();
   const mapa = new Map(produtos.map((p) => [p.codigo, p]));
+
+  // Duas linhas do mesmo código somam ANTES de conferir o saldo. O laço antigo
+  // media cada linha contra o saldo cheio: num item com 8 em estoque, duas
+  // linhas de 5 passavam as duas e o pedido saía com 10.
+  const somadas = new Map();
+  for (const l of linhas) {
+    const codigo = String(l.codigo);
+    const bruto = Number(l.quantidade);
+    // "12,5" e "abc" viram NaN, e NaN escapa de `<= 0`, de `> limite` e de
+    // `< mínimo` — passava por todas as travas e gravava total NaN. Aqui vira
+    // zero, e zero é recusado com aviso na tela.
+    const qtd = Number.isFinite(bruto) && bruto > 0 ? Math.floor(bruto) : 0;
+    somadas.set(codigo, (somadas.get(codigo) || 0) + qtd);
+  }
 
   const itens = [];
   const recusados = [];
@@ -68,10 +121,26 @@ async function montarPedido(sessao, corpo) {
   let totalProgramado = 0;
   let pecas = 0;
 
-  for (const l of linhas) {
-    const p = mapa.get(String(l.codigo));
-    const qtd = Math.floor(Number(l.quantidade || 0));
-    if (!p || qtd <= 0) continue;
+  for (const [codigo, qtd] of somadas) {
+    const p = mapa.get(codigo);
+
+    // Item que sumiu do catálogo, ou quantidade que não é número: antes isso
+    // era descartado em silêncio e o pedido fechava com `ok: true` faltando
+    // linha — nem o cliente nem o Marcelo ficavam sabendo.
+    if (!p) {
+      recusados.push({
+        codigo, nome: '', pedido: qtd, limite: 0,
+        motivo: 'este item saiu do catálogo desde que você montou o carrinho',
+      });
+      continue;
+    }
+    if (qtd <= 0) {
+      recusados.push({
+        codigo: p.codigo, nome: p.nome, pedido: qtd, limite: 0,
+        motivo: 'quantidade inválida',
+      });
+      continue;
+    }
 
     // Marca que trabalha por TARJA (Yin's) não tem número de saldo para
     // comparar. O que existe é REGULAR / REDUZIDO / ZERADO / PRÉ-VENDA, e a
@@ -133,6 +202,11 @@ async function montarPedido(sessao, corpo) {
       precoUnitario: calc.preco,
       total,
       estoqueNoMomento: p.estoque,
+      // Vão junto para o PDF: sem a unidade, "24" pode virar 24 peças ou 24
+      // embalagens de 12 na hora de expedir; sem a tarja, um pedido inteiro de
+      // itens REDUZIDO sai igual a um de itens REGULAR.
+      unidadeVenda: p.unidadeVenda || '',
+      situacaoEstoque: p.situacaoEstoque || '',
     });
 
     pecas += qtd;
@@ -163,7 +237,15 @@ async function montarPedido(sessao, corpo) {
   const pedidoMinimo = marca.pedidoMinimo !== null && marca.pedidoMinimo !== undefined ? marca.pedidoMinimo : config.pedidoMinimo;
 
   const cab = corpo.cabecalho || {};
-  const frete = total >= valorFreteCif ? 'CIF' : (cab.frete || 'FOB');
+  // Quem decide o frete é o valor do pedido, não o campo da tela. O campo de
+  // frete só fica travado quando JÁ é CIF; abaixo do patamar ele ficava
+  // editável, e escrever "CIF" nele passava direto — o frete de um pedido
+  // abaixo do mínimo saía por conta da representação. A equipe continua
+  // podendo informar o frete à mão, porque aí existe alguém respondendo.
+  const freteCalculado = total >= valorFreteCif ? 'CIF' : 'FOB';
+  const frete = ehCliente
+    ? freteCalculado
+    : (String(cab.frete || '').toUpperCase() === 'CIF' ? 'CIF' : freteCalculado);
 
   // pedidoMinimo/valorFreteCif aqui já são os efetivos (marca, com Config
   // como plano B) — routes/previa e / continuam lendo `config.pedidoMinimo`
@@ -205,11 +287,30 @@ async function montarPedido(sessao, corpo) {
  * Prévia: recalcula o carrinho sem gravar nada
  * ------------------------------------------------------------------ */
 
+/**
+ * O que da prévia pode ir para o navegador do CLIENTE.
+ *
+ * `lib/catalogoServico.js` promete que "o desconto do cliente e a conta de
+ * formação de preço não saem daqui", e `models/Usuario.js` diz que o desconto
+ * NUNCA é enviado ao navegador dele. A prévia furava as duas coisas: mandava
+ * `descontoCliente` inteiro e o `precoTabela` de cada item ao lado do preço
+ * final — de onde a margem sai por subtração. Para a equipe, os dois campos
+ * continuam, porque é ela que precisa conferir a conta.
+ */
+function limparPreviaDoCliente(dados) {
+  const { descontoCliente, ...resto } = dados;
+  return {
+    ...resto,
+    itens: (dados.itens || []).map(({ precoTabela, estoqueNoMomento, ...item }) => item),
+  };
+}
+
 router.post('/previa', async (req, res) => {
   try {
     const { dados, config, recusados } = await montarPedido(req.session.usuario, req.body);
+    const visivel = req.session.usuario.perfil === 'cliente' ? limparPreviaDoCliente(dados) : dados;
     res.json({
-      ...dados,
+      ...visivel,
       recusados,
       pedidoMinimo: config.pedidoMinimo,
       atingiuMinimo: dados.total >= config.pedidoMinimo,
@@ -287,39 +388,88 @@ function escopo(sessao, extra = {}) {
 
 router.get('/', async (req, res) => {
   const filtro = escopo(req.session.usuario);
-  if (req.query.status) filtro.status = req.query.status;
-  if (req.query.cliente && req.session.usuario.perfil !== 'cliente') filtro.clienteId = req.query.cliente;
+  // String() na marra: sem isso, `?status[$regex]=(a+)+$` chegava ao Mongo
+  // como operador, não como texto. O escopo do cliente continuava valendo,
+  // mas a regex catastrófica ia para o banco assim mesmo.
+  if (req.query.status) filtro.status = String(req.query.status);
+  if (req.query.cliente && req.session.usuario.perfil !== 'cliente') {
+    filtro.clienteId = String(req.query.cliente);
+  }
 
+  const limite = Number(req.query.limite);
   const pedidos = await Pedido.find(filtro)
     .sort({ createdAt: -1 })
-    .limit(Number(req.query.limite || 200))
+    .limit(Number.isFinite(limite) && limite > 0 ? Math.min(1000, Math.floor(limite)) : 200)
     .lean();
-  res.json(pedidos);
+  res.json(pedidos.map((p) => semDesconto(req.session.usuario, p)));
 });
 
+/**
+ * O número do pedido, ou nada.
+ *
+ * `Number("abc")` é NaN, e NaN chegando ao Mongoose vira CastError. Com o
+ * `.catch(next)` de hoje isso já não derruba o servidor, mas responder 400 na
+ * hora é mais honesto do que deixar o banco reclamar.
+ */
+function numeroDoPedido(req) {
+  const n = Number(req.params.numero);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** O desconto do cliente não volta nem no pedido gravado. */
+function semDesconto(sessao, pedido) {
+  if (!pedido || sessao.perfil !== 'cliente') return pedido;
+  const { descontoCliente, ...resto } = pedido;
+  return { ...resto, itens: (pedido.itens || []).map(({ precoTabela, ...i }) => i) };
+}
+
 router.get('/:numero', async (req, res) => {
-  const p = await Pedido.findOne(escopo(req.session.usuario, { numero: Number(req.params.numero) })).lean();
+  const numero = numeroDoPedido(req);
+  if (!numero) return res.status(400).json({ erro: 'Número de pedido inválido.' });
+  const p = await Pedido.findOne(escopo(req.session.usuario, { numero })).lean();
   if (!p) return res.status(404).json({ erro: 'Pedido não encontrado.' });
-  res.json(p);
+  res.json(semDesconto(req.session.usuario, p));
 });
 
 /* ------------------------------------------------------------------ *
  * Saídas: Excel e PDF
  * ------------------------------------------------------------------ */
 
+/**
+ * O nome da marca para o cabeçalho do documento.
+ *
+ * Estava chumbado "MAXPRINT" no Excel de todo pedido — inclusive nos da
+ * Samsonite, com preço Samsonite. É essa planilha que o Marcelo usa para
+ * digitar no portal da indústria, e cabeçalho errado é exatamente o que faz o
+ * pedido ser digitado no portal errado. No PDF era um mapa fixo de duas
+ * marcas, então a Yin's saía sem nome nenhum.
+ */
+async function nomeDaMarcaDoPedido(pedido) {
+  try {
+    const m = await carregarMarca(pedido.marcaSlug || 'maxprint');
+    if (m && m.nome) return m.nome;
+  } catch (_) { /* marca apagada não impede a emissão do documento */ }
+  const slug = String(pedido.marcaSlug || 'maxprint');
+  return slug.charAt(0).toUpperCase() + slug.slice(1);
+}
+
 router.get('/:numero/excel', async (req, res) => {
-  const p = await Pedido.findOne(escopo(req.session.usuario, { numero: Number(req.params.numero) })).lean();
+  const numero = numeroDoPedido(req);
+  if (!numero) return res.status(400).json({ erro: 'Número de pedido inválido.' });
+  const p = await Pedido.findOne(escopo(req.session.usuario, { numero })).lean();
   if (!p) return res.status(404).json({ erro: 'Pedido não encontrado.' });
-  const buf = await gerarExcel(p);
+  const buf = await gerarExcel(p, { nomeMarca: await nomeDaMarcaDoPedido(p) });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="pedido-${p.numero}.xlsx"`);
   res.send(Buffer.from(buf));
 });
 
 router.get('/:numero/pdf', async (req, res) => {
-  const p = await Pedido.findOne(escopo(req.session.usuario, { numero: Number(req.params.numero) })).lean();
+  const numero = numeroDoPedido(req);
+  if (!numero) return res.status(400).json({ erro: 'Número de pedido inválido.' });
+  const p = await Pedido.findOne(escopo(req.session.usuario, { numero })).lean();
   if (!p) return res.status(404).json({ erro: 'Pedido não encontrado.' });
-  const buf = await gerarPdf(p);
+  const buf = await gerarPdf(p, { nomeMarca: await nomeDaMarcaDoPedido(p) });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="pedido-${p.numero}.pdf"`);
   res.send(buf);
@@ -331,16 +481,17 @@ router.get('/:numero/pdf', async (req, res) => {
  */
 router.post('/copia/:formato', async (req, res) => {
   try {
-    const { dados } = await montarPedido(req.session.usuario, req.body);
+    const { dados, marca } = await montarPedido(req.session.usuario, req.body);
     const rascunho = { ...dados, numero: 'RASCUNHO', createdAt: new Date() };
+    const opcoesDoc = { nomeMarca: (marca && marca.nome) || '' };
 
     if (req.params.formato === 'pdf') {
-      const buf = await gerarPdf(rascunho);
+      const buf = await gerarPdf(rascunho, opcoesDoc);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', 'attachment; filename="pedido-rascunho.pdf"');
       return res.send(buf);
     }
-    const buf = await gerarExcel(rascunho);
+    const buf = await gerarExcel(rascunho, opcoesDoc);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="pedido-rascunho.xlsx"');
     return res.send(Buffer.from(buf));
@@ -353,16 +504,25 @@ router.post('/copia/:formato', async (req, res) => {
  * Painel: mudança de status
  * ------------------------------------------------------------------ */
 
+const STATUS_VALIDOS = ['novo', 'digitado', 'faturado', 'cancelado'];
+
 router.patch('/:numero', requireInterno, async (req, res) => {
   const permitido = {};
-  if (req.body.status) permitido.status = req.body.status;
-  if (req.body.observacaoInterna !== undefined) permitido.observacaoInterna = req.body.observacaoInterna;
+  // Lista fechada: o enum do schema já recusaria outro valor, mas com erro de
+  // validação em vez de uma resposta que explica.
+  if (req.body.status) {
+    const s = String(req.body.status);
+    if (!STATUS_VALIDOS.includes(s)) {
+      return res.status(400).json({ erro: `Status inválido. Use um destes: ${STATUS_VALIDOS.join(', ')}.` });
+    }
+    permitido.status = s;
+  }
+  if (req.body.observacaoInterna !== undefined) permitido.observacaoInterna = String(req.body.observacaoInterna);
 
-  const p = await Pedido.findOneAndUpdate(
-    { numero: Number(req.params.numero) },
-    permitido,
-    { new: true }
-  ).lean();
+  const numero = numeroDoPedido(req);
+  if (!numero) return res.status(400).json({ erro: 'Número de pedido inválido.' });
+
+  const p = await Pedido.findOneAndUpdate({ numero }, permitido, { new: true }).lean();
   if (!p) return res.status(404).json({ erro: 'Pedido não encontrado.' });
   res.json(p);
 });
