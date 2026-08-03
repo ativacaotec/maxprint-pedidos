@@ -1,4 +1,4 @@
-const CACHE = 'catalogo-ativacao-v1';
+const CACHE = 'catalogo-ativacao-v2';
 const ASSETS = ['./','./index.html','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png','./favicon.png'];
 
 self.addEventListener('install', e => {
